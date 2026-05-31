@@ -1,0 +1,45 @@
+testnet: true
+symbol: BTC
+interval: 15m
+data:
+  lookback: 5000
+strategies:
+  ema_trend:
+    enabled: true
+    weight: 1.0
+    params: {fast: 21, slow: 55, atr_period: 14, pullback_atr: 1.0, trend_min_pct: 0.2}
+    grid: {fast: [13, 21], slow: [55, 89]}
+  rsi_meanrev:
+    enabled: true
+    weight: 1.0
+    params: {period: 14, oversold: 30, overbought: 70}
+    grid: {period: [9, 14], oversold: [25, 30]}
+  bb_squeeze:
+    enabled: true
+    weight: 1.0
+    params: {period: 20, num_std: 2.0, squeeze_lookback: 50, squeeze_quantile: 0.25}
+    grid: {period: [20, 30]}
+  fvg:
+    enabled: true
+    weight: 1.0
+    params: {atr_period: 14, min_gap_atr: 0.25}
+    grid: {min_gap_atr: [0.25, 0.5]}
+  macd_momentum:
+    enabled: true
+    weight: 1.0
+    params: {fast: 12, slow: 26, signal: 9}
+    grid: {fast: [8, 12]}
+aggregator:
+  buy_threshold: 60
+  sell_threshold: 60
+  margin: 10
+backtest:
+  in_sample_bars: 1500
+  out_sample_bars: 500
+  step: 500
+  warmup_bars: 200
+  fee: 0.0005
+  slippage: 0.0002
+  risk_fraction: 0.1
+  initial_equity: 10000
+  metric: total_return
