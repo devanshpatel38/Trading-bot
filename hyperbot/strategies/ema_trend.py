@@ -10,7 +10,7 @@ class EmaTrendStrategy(Strategy):
 
     @staticmethod
     def default_params() -> dict:
-        return {"fast": 21, "slow": 55, "atr_period": 14, "pullback_atr": 1.0, "trend_min_pct": 0.2}
+        return {"fast": 20, "slow": 200, "atr_period": 14, "pullback_atr": 0.5}
 
     def analyze(self, df: pd.DataFrame) -> StrategySignal:
         p = self.params
@@ -20,29 +20,36 @@ class EmaTrendStrategy(Strategy):
         fast = ema(close, p["fast"])
         slow = ema(close, p["slow"])
         a = atr(df, p["atr_period"])
-        c, f, s, av = float(close.iloc[-1]), float(fast.iloc[-1]), float(slow.iloc[-1]), float(a.iloc[-1])
+        c = float(close.iloc[-1])
+        o = float(df["open"].iloc[-1])
+        f = float(fast.iloc[-1])
+        s = float(slow.iloc[-1])
+        av = float(a.iloc[-1])
         if pd.isna(av) or av <= 0:
             return self.neutral(df, "ATR unavailable")
-        trend_pct = abs(f - s) / c * 100.0
-        regime = "trending" if trend_pct >= p["trend_min_pct"] else "ranging"
-        dist = (c - f) / av  # signed distance from fast EMA in ATR units
-        buy = sell = 0.0
-        if f > s:
-            if dist <= p["pullback_atr"]:
-                proximity = max(0.0, 1.0 - abs(dist) / p["pullback_atr"])
-                buy = min(100.0, 40.0 + 60.0 * proximity)
-                reason = f"Uptrend (fast>slow, {trend_pct:.2f}%), pullback {dist:.2f} ATR to fast EMA"
-            else:
-                buy = 20.0
-                reason = f"Uptrend but extended {dist:.2f} ATR above fast EMA"
-        elif f < s:
-            if dist >= -p["pullback_atr"]:
-                proximity = max(0.0, 1.0 - abs(dist) / p["pullback_atr"])
-                sell = min(100.0, 40.0 + 60.0 * proximity)
-                reason = f"Downtrend (fast<slow, {trend_pct:.2f}%), pullback {dist:.2f} ATR to fast EMA"
-            else:
-                sell = 20.0
-                reason = f"Downtrend but extended {dist:.2f} ATR below fast EMA"
+
+        in_zone = abs(c - f) <= p["pullback_atr"] * av
+
+        buy_comps = [c > s, f > s, in_zone, c > o]
+        sell_comps = [c < s, f < s, in_zone, c < o]
+        buy = 25.0 * sum(buy_comps)
+        sell = 25.0 * sum(sell_comps)
+
+        if f > s or f < s:
+            regime = "trending"
         else:
-            reason = "No clear trend"
+            regime = "ranging"
+
+        if buy >= sell:
+            reason = (
+                f"htf={25 * int(buy_comps[0])} align={25 * int(buy_comps[1])} "
+                f"pullback={25 * int(buy_comps[2])} candle={25 * int(buy_comps[3])} "
+                f"-> buy {int(buy)}"
+            )
+        else:
+            reason = (
+                f"htf={25 * int(sell_comps[0])} align={25 * int(sell_comps[1])} "
+                f"pullback={25 * int(sell_comps[2])} candle={25 * int(sell_comps[3])} "
+                f"-> sell {int(sell)}"
+            )
         return StrategySignal(self.name, buy, sell, regime, reason, last_timestamp(df))

@@ -10,7 +10,7 @@ def test_config_loads_defaults():
     assert set(cfg.strategies.keys()) == {
         "ema_trend", "rsi_meanrev", "bb_squeeze", "fvg", "macd_momentum"
     }
-    assert cfg.strategies["ema_trend"].grid["fast"] == [13, 21]
+    assert cfg.strategies["ema_trend"].grid["pullback_atr"] == [0.5, 1.0]
     assert cfg.aggregator.threshold == 50
     assert cfg.aggregator.min_agree == 3
     assert cfg.aggregator.margin == 15

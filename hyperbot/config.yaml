@@ -7,13 +7,13 @@ strategies:
   ema_trend:
     enabled: true
     weight: 1.0
-    params: {fast: 21, slow: 55, atr_period: 14, pullback_atr: 1.0, trend_min_pct: 0.2}
-    grid: {fast: [13, 21], slow: [55, 89]}
+    params: {fast: 20, slow: 200, atr_period: 14, pullback_atr: 0.5}
+    grid: {pullback_atr: [0.5, 1.0]}
   rsi_meanrev:
     enabled: true
     weight: 1.0
-    params: {period: 14, oversold: 30, overbought: 70}
-    grid: {period: [9, 14], oversold: [25, 30]}
+    params: {period: 14, oversold: 30.0, overbought: 70.0, ema_period: 50, atr_period: 14, mean_atr: 1.5}
+    grid: {oversold: [25, 30]}
   bb_squeeze:
     enabled: true
     weight: 1.0
