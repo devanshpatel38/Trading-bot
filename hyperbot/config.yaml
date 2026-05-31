@@ -30,14 +30,14 @@ strategies:
     params: {fast: 12, slow: 26, signal: 9}
     grid: {fast: [8, 12]}
 aggregator:
-  buy_threshold: 60
-  sell_threshold: 60
-  margin: 10
+  threshold: 50
+  min_agree: 3
+  margin: 15
 backtest:
   in_sample_bars: 1500
   out_sample_bars: 500
   step: 500
-  warmup_bars: 200
+  warmup_bars: 220
   fee: 0.0005
   slippage: 0.0002
   risk_fraction: 0.1

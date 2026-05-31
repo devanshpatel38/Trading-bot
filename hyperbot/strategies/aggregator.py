@@ -5,29 +5,36 @@ from dataclasses import dataclass, field
 
 @dataclass
 class AggregatedSignal:
-    buy_confidence: float
-    sell_confidence: float
+    recommendation: str  # "long" | "short" | "stand_aside"
+    avg_buy: float
+    avg_sell: float
+    agree_buy: int
+    agree_sell: int
     regime: str
-    decision: str  # "LONG" | "SHORT" | "FLAT"
     reason: str
     components: list = field(default_factory=list)
 
 
-def aggregate(signals, weights, buy_threshold, sell_threshold, margin) -> AggregatedSignal:
-    total_w = sum(max(0.0, weights.get(s.strategy, 1.0)) for s in signals)
-    if not signals or total_w <= 0:
-        return AggregatedSignal(0.0, 0.0, "unknown", "FLAT", "no active strategies", [])
-    buy = sum(s.buy_confidence * weights.get(s.strategy, 1.0) for s in signals) / total_w
-    sell = sum(s.sell_confidence * weights.get(s.strategy, 1.0) for s in signals) / total_w
-    regime_scores: dict[str, float] = {}
-    for s in signals:
-        regime_scores[s.regime] = regime_scores.get(s.regime, 0.0) + weights.get(s.strategy, 1.0)
-    regime = max(regime_scores.items(), key=lambda kv: kv[1])[0]
-    if buy >= buy_threshold and (buy - sell) >= margin:
-        decision = "LONG"
-    elif sell >= sell_threshold and (sell - buy) >= margin:
-        decision = "SHORT"
+def aggregate(signals, threshold: float = 50.0, min_agree: int = 3, margin: float = 15.0) -> AggregatedSignal:
+    if not signals:
+        return AggregatedSignal("stand_aside", 0.0, 0.0, 0, 0, "unknown", "no signals", [])
+    n = len(signals)
+    agree_buy = sum(1 for s in signals if s.buy_confidence >= threshold)
+    agree_sell = sum(1 for s in signals if s.sell_confidence >= threshold)
+    avg_buy = sum(s.buy_confidence for s in signals) / n
+    avg_sell = sum(s.sell_confidence for s in signals) / n
+    if agree_buy >= min_agree and avg_buy >= threshold * 0.8 and avg_buy > avg_sell + margin:
+        rec = "long"
+    elif agree_sell >= min_agree and avg_sell >= threshold * 0.8 and avg_sell > avg_buy + margin:
+        rec = "short"
     else:
-        decision = "FLAT"
-    reason = f"buy={buy:.1f} sell={sell:.1f} regime={regime} -> {decision}"
-    return AggregatedSignal(round(buy, 4), round(sell, 4), regime, decision, reason, list(signals))
+        rec = "stand_aside"
+    regime_scores: dict[str, int] = {}
+    for s in signals:
+        regime_scores[s.regime] = regime_scores.get(s.regime, 0) + 1
+    regime = max(regime_scores.items(), key=lambda kv: kv[1])[0]
+    reason = (
+        f"agree_buy={agree_buy} agree_sell={agree_sell} "
+        f"avg_buy={avg_buy:.1f} avg_sell={avg_sell:.1f} -> {rec}"
+    )
+    return AggregatedSignal(rec, round(avg_buy, 4), round(avg_sell, 4), agree_buy, agree_sell, regime, reason, list(signals))

@@ -17,9 +17,9 @@ class StrategyConfig:
 
 @dataclass
 class AggregatorConfig:
-    buy_threshold: float
-    sell_threshold: float
-    margin: float
+    threshold: float    # confidence required to "agree" (50)
+    min_agree: int      # min strategies agreeing (3)
+    margin: float       # agreed avg must beat opposite by this (15)
 
 
 @dataclass

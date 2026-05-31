@@ -4,7 +4,9 @@ import pandas as pd
 from hyperbot.config import (
     Config, StrategyConfig, AggregatorConfig, BacktestConfig
 )
-from hyperbot.backtest import expand_grid, simulate, metric_value, walk_forward
+from hyperbot.backtest import (
+    expand_grid, simulate, metric_value, walk_forward, make_solo_decider
+)
 from hyperbot.strategies.base import Strategy, StrategySignal
 
 
@@ -37,11 +39,10 @@ def test_expand_grid_empty_returns_base():
 
 def test_simulate_long_in_uptrend_profits():
     df = _ramp_df(50)
-    agg_cfg = {"buy_threshold": 60, "sell_threshold": 60, "margin": 10}
     bt_cfg = {"fee": 0.0, "slippage": 0.0, "risk_fraction": 1.0}
     trades, curve, equity = simulate(
-        df, {"always_long": _AlwaysLong()}, {"always_long": 1.0},
-        agg_cfg, bt_cfg, start_offset=5, initial_equity=10000.0,
+        df, {"always_long": _AlwaysLong()}, make_solo_decider(50, 10),
+        bt_cfg, start_offset=5, initial_equity=10000.0,
     )
     assert equity > 10000.0
     assert len(trades) >= 1
@@ -64,7 +65,7 @@ def test_walk_forward_smoke():
                 grid={"fast": [5, 8]},
             )
         },
-        aggregator=AggregatorConfig(buy_threshold=40, sell_threshold=40, margin=5),
+        aggregator=AggregatorConfig(threshold=50, min_agree=3, margin=15),
         backtest=BacktestConfig(
             in_sample_bars=40, out_sample_bars=20, step=20, warmup_bars=15,
             fee=0.0005, slippage=0.0002, risk_fraction=0.1,

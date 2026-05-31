@@ -10,7 +10,7 @@ import pandas as pd
 from .config import Config
 from .data_client import HyperliquidDataClient
 from .strategies import REGISTRY
-from .strategies.aggregator import aggregate
+from .strategies.aggregator import aggregate, AggregatedSignal
 
 
 def make_strategy(name: str, params: dict):
@@ -29,7 +29,7 @@ def expand_grid(base: dict, grid: dict) -> list[dict]:
     return out
 
 
-def simulate(df, strategies, weights, agg_cfg, bt_cfg, start_offset, initial_equity):
+def simulate(df, strategies, decide, bt_cfg, start_offset, initial_equity):
     equity = initial_equity
     position = 0  # -1 short, 0 flat, 1 long
     size = 0.0
@@ -59,10 +59,10 @@ def simulate(df, strategies, weights, agg_cfg, bt_cfg, start_offset, initial_equ
     for i in range(start_offset, len(df)):
         window = df.iloc[: i + 1]
         sigs = [s.analyze(window) for s in strategies.values()]
-        agg = aggregate(sigs, weights, agg_cfg["buy_threshold"], agg_cfg["sell_threshold"], agg_cfg["margin"])
+        agg = decide(sigs)
         price = float(closes[i])
         t = index[i]
-        target = 1 if agg.decision == "LONG" else (-1 if agg.decision == "SHORT" else 0)
+        target = 1 if agg.recommendation == "long" else (-1 if agg.recommendation == "short" else 0)
         if target != position:
             if position != 0:
                 exit_price = price * (1 - position * bt_cfg["slippage"])
@@ -76,8 +76,8 @@ def simulate(df, strategies, weights, agg_cfg, bt_cfg, start_offset, initial_equ
                     "entry_time": str(t),
                     "entry_price": entry_price,
                     "size": size,
-                    "buy_confidence": agg.buy_confidence,
-                    "sell_confidence": agg.sell_confidence,
+                    "buy_confidence": agg.avg_buy,
+                    "sell_confidence": agg.avg_sell,
                     "regime": agg.regime,
                     "entry_reason": agg.reason,
                 }
@@ -105,12 +105,24 @@ def metric_value(trades, initial_equity, metric) -> float:
     return total_pnl / initial_equity
 
 
-def _agg_cfg(cfg: Config) -> dict:
-    return {
-        "buy_threshold": cfg.aggregator.buy_threshold,
-        "sell_threshold": cfg.aggregator.sell_threshold,
-        "margin": cfg.aggregator.margin,
-    }
+def make_aggregator_decider(cfg: Config):
+    a = cfg.aggregator
+    return lambda sigs: aggregate(sigs, a.threshold, a.min_agree, a.margin)
+
+
+def make_solo_decider(threshold, margin):
+    def decide(sigs):
+        s = sigs[0]
+        if s.buy_confidence >= threshold and s.buy_confidence > s.sell_confidence + margin:
+            rec = "long"
+        elif s.sell_confidence >= threshold and s.sell_confidence > s.buy_confidence + margin:
+            rec = "short"
+        else:
+            rec = "stand_aside"
+        return AggregatedSignal(rec, s.buy_confidence, s.sell_confidence,
+                                int(s.buy_confidence >= threshold), int(s.sell_confidence >= threshold),
+                                s.regime, s.reason, [s])
+    return decide
 
 
 def _bt_cfg(cfg: Config) -> dict:
@@ -131,8 +143,9 @@ def optimize(is_df, cfg: Config) -> dict:
         for combo in combos:
             strat = make_strategy(name, combo)
             trades, _, _ = simulate(
-                is_df, {name: strat}, {name: 1.0}, _agg_cfg(cfg), _bt_cfg(cfg),
-                cfg.backtest.warmup_bars, cfg.backtest.initial_equity,
+                is_df, {name: strat},
+                make_solo_decider(cfg.aggregator.threshold, cfg.aggregator.margin),
+                _bt_cfg(cfg), cfg.backtest.warmup_bars, cfg.backtest.initial_equity,
             )
             m = metric_value(trades, cfg.backtest.initial_equity, cfg.backtest.metric)
             if m > best_metric:
@@ -144,7 +157,7 @@ def optimize(is_df, cfg: Config) -> dict:
 def walk_forward(df, cfg: Config) -> dict:
     bt = cfg.backtest
     n = len(df)
-    weights = {name: s.weight for name, s in cfg.strategies.items() if s.enabled}
+    decide = make_aggregator_decider(cfg)
     all_trades, full_curve, windows = [], [], []
     equity = bt.initial_equity
     i = widx = 0
@@ -157,7 +170,7 @@ def walk_forward(df, cfg: Config) -> dict:
         offset = oos_start - seg_start
         strategies = {name: make_strategy(name, best[name]) for name in best}
         trades, curve, equity = simulate(
-            seg, strategies, weights, _agg_cfg(cfg), _bt_cfg(cfg), offset, equity
+            seg, strategies, decide, _bt_cfg(cfg), offset, equity
         )
         all_trades.extend(trades)
         full_curve.extend(curve)

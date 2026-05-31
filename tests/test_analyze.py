@@ -13,7 +13,7 @@ def _cfg():
             "ema_trend": StrategyConfig(True, 1.0, {"fast": 5, "slow": 10}, {}),
             "rsi_meanrev": StrategyConfig(True, 1.0, {"period": 14}, {}),
         },
-        aggregator=AggregatorConfig(60, 60, 10),
+        aggregator=AggregatorConfig(50, 3, 15),
         backtest=BacktestConfig(40, 20, 20, 15, 0.0005, 0.0002, 0.1, 10000.0, "total_return"),
     )
 
@@ -28,4 +28,4 @@ def test_analyze_returns_signals_and_aggregate():
     sigs, agg = analyze(_cfg(), df)
     assert len(sigs) == 2
     assert isinstance(agg, AggregatedSignal)
-    assert agg.decision in {"LONG", "SHORT", "FLAT"}
+    assert agg.recommendation in {"long", "short", "stand_aside"}

@@ -11,6 +11,8 @@ def test_config_loads_defaults():
         "ema_trend", "rsi_meanrev", "bb_squeeze", "fvg", "macd_momentum"
     }
     assert cfg.strategies["ema_trend"].grid["fast"] == [13, 21]
-    assert cfg.aggregator.buy_threshold == 60
-    assert cfg.backtest.warmup_bars == 200
+    assert cfg.aggregator.threshold == 50
+    assert cfg.aggregator.min_agree == 3
+    assert cfg.aggregator.margin == 15
+    assert cfg.backtest.warmup_bars == 220
     assert cfg.backtest.metric == "total_return"
