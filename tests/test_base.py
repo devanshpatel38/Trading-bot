@@ -22,10 +22,10 @@ def test_strategy_merges_default_params():
         def default_params():
             return {"a": 1, "b": 2}
 
-        def evaluate(self, df):
+        def analyze(self, df):
             return self.neutral(df, "noop")
 
     d = Dummy({"b": 9})
     assert d.params == {"a": 1, "b": 9}
-    sig = d.evaluate(pd.DataFrame({"close": [1.0]}, index=pd.to_datetime(["2021-01-01"])))
+    sig = d.analyze(pd.DataFrame({"close": [1.0]}, index=pd.to_datetime(["2021-01-01"])))
     assert sig.buy_confidence == 0.0 and sig.reason == "noop"

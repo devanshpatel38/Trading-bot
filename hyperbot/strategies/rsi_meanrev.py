@@ -12,7 +12,7 @@ class RsiMeanRevStrategy(Strategy):
     def default_params() -> dict:
         return {"period": 14, "oversold": 30.0, "overbought": 70.0}
 
-    def evaluate(self, df: pd.DataFrame) -> StrategySignal:
+    def analyze(self, df: pd.DataFrame) -> StrategySignal:
         p = self.params
         if len(df) < p["period"] + 1:
             return self.neutral(df, "insufficient data")

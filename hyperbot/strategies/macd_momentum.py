@@ -12,7 +12,7 @@ class MacdMomentumStrategy(Strategy):
     def default_params() -> dict:
         return {"fast": 12, "slow": 26, "signal": 9}
 
-    def evaluate(self, df: pd.DataFrame) -> StrategySignal:
+    def analyze(self, df: pd.DataFrame) -> StrategySignal:
         p = self.params
         if len(df) < p["slow"] + p["signal"] + 1:
             return self.neutral(df, "insufficient data")

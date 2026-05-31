@@ -14,11 +14,11 @@ def _df(values):
 
 
 def test_rising_series_gives_buy():
-    sig = MacdMomentumStrategy().evaluate(_df(list(np.linspace(100, 200, 80))))
+    sig = MacdMomentumStrategy().analyze(_df(list(np.linspace(100, 200, 80))))
     assert sig.buy_confidence > 0.0
     assert sig.sell_confidence == 0.0
 
 
 def test_insufficient_data_is_neutral():
-    sig = MacdMomentumStrategy().evaluate(_df([100.0] * 5))
+    sig = MacdMomentumStrategy().analyze(_df([100.0] * 5))
     assert sig.reason == "insufficient data"

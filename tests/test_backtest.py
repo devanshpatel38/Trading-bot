@@ -20,7 +20,7 @@ def _ramp_df(n):
 class _AlwaysLong(Strategy):
     name = "always_long"
 
-    def evaluate(self, df):
+    def analyze(self, df):
         return StrategySignal(self.name, 100.0, 0.0, "trending", "stub", df.index[-1])
 
 

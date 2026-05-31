@@ -13,12 +13,12 @@ def _df(values):
 
 
 def test_flat_series_is_squeeze_upward_bias():
-    sig = BbSqueezeStrategy().evaluate(_df([100.0] * 80))
+    sig = BbSqueezeStrategy().analyze(_df([100.0] * 80))
     assert sig.regime == "squeeze"
     assert sig.buy_confidence == 50.0
     assert sig.sell_confidence == 0.0
 
 
 def test_insufficient_data_is_neutral():
-    sig = BbSqueezeStrategy().evaluate(_df([100.0] * 10))
+    sig = BbSqueezeStrategy().analyze(_df([100.0] * 10))
     assert sig.reason == "insufficient data"

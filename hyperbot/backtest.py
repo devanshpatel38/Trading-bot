@@ -58,7 +58,7 @@ def simulate(df, strategies, weights, agg_cfg, bt_cfg, start_offset, initial_equ
 
     for i in range(start_offset, len(df)):
         window = df.iloc[: i + 1]
-        sigs = [s.evaluate(window) for s in strategies.values()]
+        sigs = [s.analyze(window) for s in strategies.values()]
         agg = aggregate(sigs, weights, agg_cfg["buy_threshold"], agg_cfg["sell_threshold"], agg_cfg["margin"])
         price = float(closes[i])
         t = index[i]

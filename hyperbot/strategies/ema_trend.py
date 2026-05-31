@@ -12,7 +12,7 @@ class EmaTrendStrategy(Strategy):
     def default_params() -> dict:
         return {"fast": 21, "slow": 55, "atr_period": 14, "pullback_atr": 1.0, "trend_min_pct": 0.2}
 
-    def evaluate(self, df: pd.DataFrame) -> StrategySignal:
+    def analyze(self, df: pd.DataFrame) -> StrategySignal:
         p = self.params
         if len(df) < p["slow"] + 1:
             return self.neutral(df, "insufficient data")

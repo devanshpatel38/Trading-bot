@@ -77,7 +77,7 @@ class Strategy(ABC):
         return {}
 
     @abstractmethod
-    def evaluate(self, df: pd.DataFrame) -> StrategySignal:
+    def analyze(self, df: pd.DataFrame) -> StrategySignal:
         ...
 
     def neutral(self, df: pd.DataFrame, reason: str) -> StrategySignal:

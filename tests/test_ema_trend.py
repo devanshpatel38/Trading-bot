@@ -16,12 +16,12 @@ def _ramp_df(values):
 def test_uptrend_pullback_gives_buy():
     values = list(np.linspace(100, 200, 120))
     values[-1] = values[-2] - 1.0  # small pullback on last bar
-    sig = EmaTrendStrategy().evaluate(_ramp_df(values))
+    sig = EmaTrendStrategy().analyze(_ramp_df(values))
     assert sig.buy_confidence > sig.sell_confidence
     assert sig.regime == "trending"
 
 
 def test_insufficient_data_is_neutral():
-    sig = EmaTrendStrategy().evaluate(_ramp_df([100, 101, 102]))
+    sig = EmaTrendStrategy().analyze(_ramp_df([100, 101, 102]))
     assert sig.buy_confidence == 0.0 and sig.sell_confidence == 0.0
     assert sig.reason == "insufficient data"

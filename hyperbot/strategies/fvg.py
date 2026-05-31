@@ -12,7 +12,7 @@ class FvgStrategy(Strategy):
     def default_params() -> dict:
         return {"atr_period": 14, "min_gap_atr": 0.25}
 
-    def evaluate(self, df: pd.DataFrame) -> StrategySignal:
+    def analyze(self, df: pd.DataFrame) -> StrategySignal:
         p = self.params
         if len(df) < max(4, p["atr_period"] + 1):
             return self.neutral(df, "insufficient data")

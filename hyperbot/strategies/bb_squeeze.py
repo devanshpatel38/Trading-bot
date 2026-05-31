@@ -12,7 +12,7 @@ class BbSqueezeStrategy(Strategy):
     def default_params() -> dict:
         return {"period": 20, "num_std": 2.0, "squeeze_lookback": 50, "squeeze_quantile": 0.25}
 
-    def evaluate(self, df: pd.DataFrame) -> StrategySignal:
+    def analyze(self, df: pd.DataFrame) -> StrategySignal:
         p = self.params
         if len(df) < p["period"] + p["squeeze_lookback"]:
             return self.neutral(df, "insufficient data")

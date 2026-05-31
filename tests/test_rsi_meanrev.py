@@ -13,12 +13,12 @@ def _df(values):
 
 
 def test_falling_price_is_oversold_buy():
-    sig = RsiMeanRevStrategy().evaluate(_df(list(range(60, 1, -1))))
+    sig = RsiMeanRevStrategy().analyze(_df(list(range(60, 1, -1))))
     assert sig.buy_confidence == 100.0
     assert sig.sell_confidence == 0.0
 
 
 def test_rising_price_is_overbought_sell():
-    sig = RsiMeanRevStrategy().evaluate(_df(list(range(1, 60))))
+    sig = RsiMeanRevStrategy().analyze(_df(list(range(1, 60))))
     assert sig.sell_confidence == 100.0
     assert sig.buy_confidence == 0.0

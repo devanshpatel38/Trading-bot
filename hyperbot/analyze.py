@@ -16,7 +16,7 @@ def analyze(cfg: Config, df):
     for name, scfg in cfg.strategies.items():
         if not scfg.enabled:
             continue
-        signals.append(REGISTRY[name](scfg.params).evaluate(df))
+        signals.append(REGISTRY[name](scfg.params).analyze(df))
         weights[name] = scfg.weight
     agg = aggregate(
         signals, weights,
