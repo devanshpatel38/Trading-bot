@@ -16,9 +16,8 @@ class MacdMomentumStrategy(Strategy):
         p = self.params
         if len(df) < p["slow"] + p["signal"] + 1:
             return self.neutral(df, "insufficient data")
-        macd_line, signal_line, hist = macd(df["close"], p["fast"], p["slow"], p["signal"])
+        macd_line, signal_line, _hist = macd(df["close"], p["fast"], p["slow"], p["signal"])
         m, s = float(macd_line.iloc[-1]), float(signal_line.iloc[-1])
-        h, hp = float(hist.iloc[-1]), float(hist.iloc[-2])
         m_prev, s_prev = float(macd_line.iloc[-2]), float(signal_line.iloc[-2])
         crossed_up = m_prev <= s_prev and m > s
         crossed_dn = m_prev >= s_prev and m < s
@@ -28,9 +27,9 @@ class MacdMomentumStrategy(Strategy):
         elif crossed_dn:
             sell, reason = 75.0, "MACD bearish cross"
         elif m > s:
-            buy, reason = 55.0, "MACD above signal, momentum rising"
-        elif m < s and h <= hp:
-            sell, reason = 55.0, "MACD below signal, momentum falling"
+            buy, reason = 55.0, "MACD above signal (bullish)"
+        elif m < s:
+            sell, reason = 55.0, "MACD below signal (bearish)"
         else:
             reason = "MACD momentum mixed"
         regime = "trending" if max(buy, sell) >= 70.0 else "ranging"
