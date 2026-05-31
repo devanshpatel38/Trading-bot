@@ -42,3 +42,43 @@ def bollinger_bands(series: pd.Series, period: int = 20, num_std: float = 2.0):
     upper = mid + num_std * std
     lower = mid - num_std * std
     return upper, mid, lower
+
+
+from abc import ABC, abstractmethod
+from dataclasses import dataclass
+
+
+@dataclass
+class StrategySignal:
+    strategy: str
+    buy_confidence: float
+    sell_confidence: float
+    regime: str
+    reason: str
+    timestamp: object = None
+
+    def __post_init__(self):
+        self.buy_confidence = max(0.0, min(100.0, float(self.buy_confidence)))
+        self.sell_confidence = max(0.0, min(100.0, float(self.sell_confidence)))
+
+
+def last_timestamp(df: pd.DataFrame):
+    return df.index[-1] if len(df.index) else None
+
+
+class Strategy(ABC):
+    name: str = "base"
+
+    def __init__(self, params: dict | None = None):
+        self.params = {**self.default_params(), **(params or {})}
+
+    @staticmethod
+    def default_params() -> dict:
+        return {}
+
+    @abstractmethod
+    def evaluate(self, df: pd.DataFrame) -> StrategySignal:
+        ...
+
+    def neutral(self, df: pd.DataFrame, reason: str) -> StrategySignal:
+        return StrategySignal(self.name, 0.0, 0.0, "unknown", reason, last_timestamp(df))
