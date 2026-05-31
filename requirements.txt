@@ -1,0 +1,7 @@
+hyperliquid-python-sdk
+pandas
+numpy
+pyyaml
+python-dotenv
+rich
+pytest

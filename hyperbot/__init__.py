@@ -1,0 +1,1 @@
+"""Hyperbot — read-only Hyperliquid testnet trading bot (data + strategies + backtest)."""
