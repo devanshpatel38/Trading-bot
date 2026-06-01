@@ -24,3 +24,5 @@ def test_config_loads_defaults():
     assert cfg.backtest.rr == 3.0
     assert cfg.backtest.atr_period == 14
     assert cfg.backtest.atr_mult == 1.5
+    assert cfg.backtest.fee == 0.00045
+    assert cfg.backtest.slippage == 0.0002

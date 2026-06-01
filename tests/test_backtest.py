@@ -26,11 +26,12 @@ class _StubLong(Strategy):
         return StrategySignal(self.name, 0.0, 0.0, "ranging", "flat", df.index[-1])
 
 
-def _run(rows, fire_at, warmup=2, rr=2.0):
+def _run(rows, fire_at, warmup=2, rr=2.0, fee=0.0, slippage=0.0):
     seen = []
     trades = run_backtest(_df(rows), {"stub": _StubLong(fire_at, seen)},
                           threshold=50, min_agree=1, margin=15, rr=rr,
-                          atr_period=2, atr_mult=1.0, warmup=warmup)
+                          atr_period=2, atr_mult=1.0, warmup=warmup,
+                          fee=fee, slippage=slippage)
     return trades, seen
 
 
@@ -44,6 +45,20 @@ def test_long_tp_hit_is_win():
     assert trades[0]["outcome"] == "win"
     assert trades[0]["r_multiple"] == 2.0
     assert trades[0]["bars_held"] == 1
+
+def test_costs_reduce_r():
+    # same winning-long scenario as test_long_tp_hit_is_win, but with fee + slippage.
+    rows = [(100,101,99,100)]*3 + [(100,101,99,100)]
+    rows += [(100, 130, 100, 120)]
+    trades, _ = _run(rows, fire_at=3, fee=0.001, slippage=0.001)
+    t = trades[0]
+    assert t["outcome"] == "win"
+    assert t["gross_r"] == 2.0
+    stop_dist = abs(t["entry"] - t["stop"])
+    expected_cost = round(0.002 * (t["entry"] + t["tp"]) / stop_dist, 4)
+    assert t["cost_r"] == expected_cost
+    assert t["r_multiple"] == round(2.0 - expected_cost, 4)
+    assert t["r_multiple"] < 2.0
 
 def test_long_stop_hit_is_loss():
     rows = [(100,101,99,100)]*3 + [(100,101,99,100)]

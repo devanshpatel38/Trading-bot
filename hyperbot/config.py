@@ -29,6 +29,8 @@ class BacktestConfig:
     atr_period: int
     atr_mult: float
     warmup_bars: int
+    fee: float = 0.0
+    slippage: float = 0.0
 
 
 @dataclass

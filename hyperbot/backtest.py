@@ -15,7 +15,7 @@ from .strategies.aggregator import aggregate
 
 
 def run_backtest(df, strategies, *, threshold, min_agree, margin, rr,
-                 atr_period=14, atr_mult=1.5, warmup=215):
+                 atr_period=14, atr_mult=1.5, warmup=215, fee=0.0, slippage=0.0):
     """Walk bars one at a time (no lookahead); one trade at a time."""
     atr_series = atr(df, atr_period)
     closes, highs, lows = df["close"].values, df["high"].values, df["low"].values
@@ -36,12 +36,19 @@ def run_backtest(df, strategies, *, threshold, min_agree, margin, rr,
             elif hit_tp:
                 outcome = "win"
             if outcome is not None:
+                exit_price = open_trade["stop"] if outcome == "loss" else open_trade["tp"]
+                stop_dist = abs(open_trade["entry"] - open_trade["stop"])
+                gross_r = rr if outcome == "win" else -1.0
+                cost_r = ((fee + slippage) * (open_trade["entry"] + exit_price) / stop_dist) if stop_dist > 0 else 0.0
+                net_r = gross_r - cost_r
                 open_trade.update({
                     "outcome": outcome,
                     "exit_time": str(index[i]),
-                    "exit_price": open_trade["stop"] if outcome == "loss" else open_trade["tp"],
+                    "exit_price": exit_price,
                     "bars_held": i - open_trade.pop("_entry_i"),
-                    "r_multiple": rr if outcome == "win" else -1.0,
+                    "gross_r": gross_r,
+                    "cost_r": round(cost_r, 4),
+                    "r_multiple": round(net_r, 4),
                 })
                 trades.append(open_trade)
                 open_trade = None
@@ -67,7 +74,7 @@ def run_backtest(df, strategies, *, threshold, min_agree, margin, rr,
             "entry_time": str(index[i]), "side": agg.recommendation,
             "entry": entry, "stop": stop, "tp": tp,
             "outcome": None, "exit_time": None, "exit_price": None,
-            "bars_held": 0, "r_multiple": 0.0,
+            "bars_held": 0, "gross_r": 0.0, "cost_r": 0.0, "r_multiple": 0.0,
             "strategies_agreed": agreed,
             "confidences": {s.strategy: {"buy": s.buy_confidence, "sell": s.sell_confidence} for s in sigs},
             "_entry_i": i,
@@ -82,6 +89,8 @@ def summarize(trades):
     resolved = [t for t in trades if t["outcome"] in ("win", "loss")]
     wins = sum(1 for t in resolved if t["outcome"] == "win")
     total_r = sum(t["r_multiple"] for t in resolved)
+    gross_total_r = sum(t["gross_r"] for t in resolved)
+    total_cost_r = sum(t["cost_r"] for t in resolved)
     n = len(resolved)
     return {
         "trades": len(trades), "resolved": n, "wins": wins, "losses": n - wins,
@@ -89,6 +98,8 @@ def summarize(trades):
         "win_rate": round(wins / n * 100, 2) if n else 0.0,
         "total_r": round(total_r, 3),
         "expectancy_r": round(total_r / n, 3) if n else 0.0,
+        "gross_total_r": round(gross_total_r, 3),
+        "total_cost_r": round(total_cost_r, 3),
     }
 
 
@@ -150,6 +161,7 @@ def main():
         threshold=args.confidence, min_agree=args.minagree, margin=cfg.aggregator.margin,
         rr=args.rr, atr_period=cfg.backtest.atr_period, atr_mult=cfg.backtest.atr_mult,
         warmup=cfg.backtest.warmup_bars,
+        fee=cfg.backtest.fee, slippage=cfg.backtest.slippage,
     )
     summary = summarize(trades)
     attr = attribution(trades, list(strategies.keys()))
@@ -162,6 +174,7 @@ def main():
         "rr": args.rr, "confidence": args.confidence, "min_agree": args.minagree,
         "margin": cfg.aggregator.margin, "atr_period": cfg.backtest.atr_period,
         "atr_mult": cfg.backtest.atr_mult, "warmup_bars": cfg.backtest.warmup_bars,
+        "fee": cfg.backtest.fee, "slippage": cfg.backtest.slippage,
         "bars": len(df), "trades": trades, "summary": summary, "attribution": attr,
     }
     with open(args.out, "w", encoding="utf-8") as fh:

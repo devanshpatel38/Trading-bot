@@ -39,3 +39,5 @@ backtest:
   atr_period: 14
   atr_mult: 1.5
   warmup_bars: 215
+  fee: 0.00045      # Hyperliquid taker 0.045%
+  slippage: 0.0002  # 2 bps
