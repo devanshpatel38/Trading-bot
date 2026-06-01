@@ -10,6 +10,11 @@ def test_config_loads_defaults():
     assert set(cfg.strategies.keys()) == {
         "ema_trend", "rsi_meanrev", "bb_squeeze", "fvg", "macd_momentum"
     }
+    # bb_squeeze is intentionally disabled (failed the HTF-rehab ablation); 4-of-4 on the rest
+    assert cfg.strategies["bb_squeeze"].enabled is False
+    assert [n for n, s in cfg.strategies.items() if s.enabled] == [
+        "ema_trend", "rsi_meanrev", "fvg", "macd_momentum"
+    ]
     assert cfg.strategies["ema_trend"].grid["pullback_atr"] == [0.5, 1.0]
     assert cfg.aggregator.threshold == 75
     assert cfg.aggregator.min_agree == 4

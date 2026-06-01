@@ -15,7 +15,7 @@ strategies:
     params: {period: 14, oversold: 30.0, overbought: 70.0, ema_period: 50, atr_period: 14, mean_atr: 1.5}
     grid: {oversold: [25, 30]}
   bb_squeeze:
-    enabled: true
+    enabled: false   # dropped: HTF rehab failed ablation (agreed-WR ~25% < dissented-WR 33-40%); run 4-of-4 on remaining four
     weight: 1.0
     params: {period: 20, num_std: 2.0, squeeze_lookback: 50, squeeze_quantile: 0.25, ema_period: 200}
     grid: {period: [20, 30]}
