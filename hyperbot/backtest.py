@@ -1,212 +1,172 @@
 from __future__ import annotations
 
 import argparse
-import itertools
 import json
-import math
 
 import pandas as pd
+from rich.console import Console
+from rich.table import Table
 
 from .config import Config
 from .data_client import HyperliquidDataClient
 from .strategies import REGISTRY
-from .strategies.aggregator import aggregate, AggregatedSignal
+from .strategies.base import atr
+from .strategies.aggregator import aggregate
 
 
-def make_strategy(name: str, params: dict):
-    return REGISTRY[name](params)
-
-
-def expand_grid(base: dict, grid: dict) -> list[dict]:
-    if not grid:
-        return [dict(base)]
-    keys = list(grid.keys())
-    out = []
-    for values in itertools.product(*[grid[k] for k in keys]):
-        combo = dict(base)
-        combo.update(dict(zip(keys, values)))
-        out.append(combo)
-    return out
-
-
-def simulate(df, strategies, decide, bt_cfg, start_offset, initial_equity):
-    equity = initial_equity
-    position = 0  # -1 short, 0 flat, 1 long
-    size = 0.0
-    open_trade = None
-    trades, equity_curve = [], []
-    closes = df["close"].values
+def run_backtest(df, strategies, *, threshold, min_agree, margin, rr,
+                 atr_period=14, atr_mult=1.5, warmup=215):
+    """Walk bars one at a time (no lookahead); one trade at a time."""
+    atr_series = atr(df, atr_period)
+    closes, highs, lows = df["close"].values, df["high"].values, df["low"].values
     index = df.index
-
-    def close_position(exit_price, exit_time, exit_reason):
-        nonlocal equity, position, size, open_trade
-        gross = position * (exit_price - open_trade["entry_price"]) * size
-        fee = bt_cfg["fee"] * abs(size) * (open_trade["entry_price"] + exit_price)
-        pnl = gross - fee
-        equity += pnl
-        notional = open_trade["entry_price"] * size
-        open_trade.update({
-            "exit_time": str(exit_time),
-            "exit_price": exit_price,
-            "pnl": pnl,
-            "return_pct": (pnl / notional * 100.0) if notional else 0.0,
-            "exit_reason": exit_reason,
-            "equity_after": equity,
-        })
-        trades.append(open_trade)
-        position, size, open_trade = 0, 0.0, None
-
-    for i in range(start_offset, len(df)):
-        window = df.iloc[: i + 1]
-        sigs = [s.analyze(window) for s in strategies.values()]
-        agg = decide(sigs)
-        price = float(closes[i])
-        t = index[i]
-        target = 1 if agg.recommendation == "long" else (-1 if agg.recommendation == "short" else 0)
-        if target != position:
-            if position != 0:
-                exit_price = price * (1 - position * bt_cfg["slippage"])
-                close_position(exit_price, t, agg.reason)
-            if target != 0:
-                entry_price = price * (1 + target * bt_cfg["slippage"])
-                size = (bt_cfg["risk_fraction"] * equity) / entry_price
-                position = target
-                open_trade = {
-                    "side": "LONG" if target == 1 else "SHORT",
-                    "entry_time": str(t),
-                    "entry_price": entry_price,
-                    "size": size,
-                    "buy_confidence": agg.avg_buy,
-                    "sell_confidence": agg.avg_sell,
-                    "regime": agg.regime,
-                    "entry_reason": agg.reason,
-                }
-        equity_curve.append({"time": str(t), "equity": equity})
-
-    if position != 0:
-        price = float(closes[-1])
-        exit_price = price * (1 - position * bt_cfg["slippage"])
-        close_position(exit_price, index[-1], "end of segment")
-        equity_curve.append({"time": str(index[-1]), "equity": equity})
-
-    return trades, equity_curve, equity
-
-
-def metric_value(trades, initial_equity, metric) -> float:
-    if not trades:
-        return 0.0
-    total_pnl = sum(t["pnl"] for t in trades)
-    if metric == "sharpe":
-        rets = [t["return_pct"] / 100.0 for t in trades]
-        mean = sum(rets) / len(rets)
-        var = sum((r - mean) ** 2 for r in rets) / len(rets)
-        std = math.sqrt(var)
-        return mean / std * math.sqrt(len(rets)) if std > 0 else 0.0
-    return total_pnl / initial_equity
-
-
-def make_aggregator_decider(cfg: Config):
-    a = cfg.aggregator
-    return lambda sigs: aggregate(sigs, a.threshold, a.min_agree, a.margin)
-
-
-def make_solo_decider(threshold, margin):
-    def decide(sigs):
-        s = sigs[0]
-        if s.buy_confidence >= threshold and s.buy_confidence > s.sell_confidence + margin:
-            rec = "long"
-        elif s.sell_confidence >= threshold and s.sell_confidence > s.buy_confidence + margin:
-            rec = "short"
-        else:
-            rec = "stand_aside"
-        return AggregatedSignal(rec, s.buy_confidence, s.sell_confidence,
-                                int(s.buy_confidence >= threshold), int(s.sell_confidence >= threshold),
-                                s.regime, s.reason, [s])
-    return decide
-
-
-def _bt_cfg(cfg: Config) -> dict:
-    return {
-        "fee": cfg.backtest.fee,
-        "slippage": cfg.backtest.slippage,
-        "risk_fraction": cfg.backtest.risk_fraction,
-    }
-
-
-def optimize(is_df, cfg: Config) -> dict:
-    best = {}
-    for name, scfg in cfg.strategies.items():
-        if not scfg.enabled:
-            continue
-        combos = expand_grid(scfg.params, scfg.grid)
-        best_metric, best_params = float("-inf"), combos[0]
-        for combo in combos:
-            strat = make_strategy(name, combo)
-            trades, _, _ = simulate(
-                is_df, {name: strat},
-                make_solo_decider(cfg.aggregator.threshold, cfg.aggregator.margin),
-                _bt_cfg(cfg), cfg.backtest.warmup_bars, cfg.backtest.initial_equity,
-            )
-            m = metric_value(trades, cfg.backtest.initial_equity, cfg.backtest.metric)
-            if m > best_metric:
-                best_metric, best_params = m, combo
-        best[name] = best_params
-    return best
-
-
-def walk_forward(df, cfg: Config) -> dict:
-    bt = cfg.backtest
+    trades = []
+    open_trade = None
     n = len(df)
-    decide = make_aggregator_decider(cfg)
-    all_trades, full_curve, windows = [], [], []
-    equity = bt.initial_equity
-    i = widx = 0
-    while i + bt.in_sample_bars + bt.out_sample_bars <= n:
-        is_df = df.iloc[i : i + bt.in_sample_bars]
-        best = optimize(is_df, cfg)
-        oos_start = i + bt.in_sample_bars
-        seg_start = max(0, oos_start - bt.warmup_bars)
-        seg = df.iloc[seg_start : oos_start + bt.out_sample_bars]
-        offset = oos_start - seg_start
-        strategies = {name: make_strategy(name, best[name]) for name in best}
-        trades, curve, equity = simulate(
-            seg, strategies, decide, _bt_cfg(cfg), offset, equity
-        )
-        all_trades.extend(trades)
-        full_curve.extend(curve)
-        windows.append({
-            "index": widx,
-            "in_sample_start": int(i),
-            "oos_start": int(oos_start),
-            "params": best,
-            "trades": len(trades),
-            "end_equity": equity,
-        })
-        i += bt.step
-        widx += 1
+    for i in range(warmup, n):
+        if open_trade is not None:
+            hi, lo = float(highs[i]), float(lows[i])
+            if open_trade["side"] == "long":
+                hit_stop, hit_tp = lo <= open_trade["stop"], hi >= open_trade["tp"]
+            else:
+                hit_stop, hit_tp = hi >= open_trade["stop"], lo <= open_trade["tp"]
+            outcome = None
+            if hit_stop:           # conservative: stop wins ties
+                outcome = "loss"
+            elif hit_tp:
+                outcome = "win"
+            if outcome is not None:
+                open_trade.update({
+                    "outcome": outcome,
+                    "exit_time": str(index[i]),
+                    "exit_price": open_trade["stop"] if outcome == "loss" else open_trade["tp"],
+                    "bars_held": i - open_trade.pop("_entry_i"),
+                    "r_multiple": rr if outcome == "win" else -1.0,
+                })
+                trades.append(open_trade)
+                open_trade = None
+            continue  # no new signal while managing/closing a trade
+
+        window = df.iloc[: i + 1]  # only past + current bar -> no lookahead
+        sigs = [s.analyze(window) for s in strategies.values()]
+        agg = aggregate(sigs, threshold, min_agree, margin)
+        if agg.recommendation not in ("long", "short"):
+            continue
+        a = float(atr_series.iloc[i])
+        if pd.isna(a) or a <= 0:
+            continue
+        entry = float(closes[i])
+        stop_dist = atr_mult * a
+        if agg.recommendation == "long":
+            stop, tp = entry - stop_dist, entry + rr * stop_dist
+            agreed = [s.strategy for s in sigs if s.buy_confidence >= threshold]
+        else:
+            stop, tp = entry + stop_dist, entry - rr * stop_dist
+            agreed = [s.strategy for s in sigs if s.sell_confidence >= threshold]
+        open_trade = {
+            "entry_time": str(index[i]), "side": agg.recommendation,
+            "entry": entry, "stop": stop, "tp": tp,
+            "outcome": None, "exit_time": None, "exit_price": None,
+            "bars_held": 0, "r_multiple": 0.0,
+            "strategies_agreed": agreed,
+            "confidences": {s.strategy: {"buy": s.buy_confidence, "sell": s.sell_confidence} for s in sigs},
+            "_entry_i": i,
+        }
+    if open_trade is not None:
+        open_trade.update({"outcome": "open", "bars_held": n - 1 - open_trade.pop("_entry_i")})
+        trades.append(open_trade)
+    return trades
+
+
+def summarize(trades):
+    resolved = [t for t in trades if t["outcome"] in ("win", "loss")]
+    wins = sum(1 for t in resolved if t["outcome"] == "win")
+    total_r = sum(t["r_multiple"] for t in resolved)
+    n = len(resolved)
     return {
-        "trades": all_trades,
-        "equity_curve": full_curve,
-        "windows": windows,
-        "initial_equity": bt.initial_equity,
-        "final_equity": equity,
+        "trades": len(trades), "resolved": n, "wins": wins, "losses": n - wins,
+        "open": sum(1 for t in trades if t["outcome"] == "open"),
+        "win_rate": round(wins / n * 100, 2) if n else 0.0,
+        "total_r": round(total_r, 3),
+        "expectancy_r": round(total_r / n, 3) if n else 0.0,
     }
+
+
+def attribution(trades, strategy_names):
+    rows = {name: {"agreed_wins": 0, "agreed_losses": 0} for name in strategy_names}
+    for t in trades:
+        if t["outcome"] not in ("win", "loss"):
+            continue
+        for name in t["strategies_agreed"]:
+            rows.setdefault(name, {"agreed_wins": 0, "agreed_losses": 0})
+            rows[name]["agreed_wins" if t["outcome"] == "win" else "agreed_losses"] += 1
+    for r in rows.values():
+        tot = r["agreed_wins"] + r["agreed_losses"]
+        r["win_rate_when_agreed"] = round(r["agreed_wins"] / tot * 100, 2) if tot else 0.0
+    return rows
+
+
+def _print_trades(console, trades):
+    table = Table(title="Trades")
+    for col in ["#", "entry_time", "side", "entry", "stop", "tp", "outcome", "bars", "R", "#agree"]:
+        table.add_column(col, overflow="fold")
+    for i, t in enumerate(trades, 1):
+        table.add_row(str(i), str(t["entry_time"]), t["side"],
+                      f"{t['entry']:.2f}", f"{t['stop']:.2f}", f"{t['tp']:.2f}",
+                      t["outcome"] or "open", str(t["bars_held"]),
+                      f"{t['r_multiple']:+.1f}", str(len(t["strategies_agreed"])))
+    console.print(table)
+
+
+def _print_attribution(console, attr):
+    table = Table(title="Strategy attribution (agreement on resolved trades)")
+    for col in ["strategy", "agreed_wins", "agreed_losses", "win% when agreed"]:
+        table.add_column(col)
+    for name, r in attr.items():
+        table.add_row(name, str(r["agreed_wins"]), str(r["agreed_losses"]), f"{r['win_rate_when_agreed']:.1f}")
+    console.print(table)
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Walk-forward backtest (read-only).")
-    parser.add_argument("--config", default="hyperbot/config.yaml")
-    parser.add_argument("--out", default="backtest_results.json")
-    args = parser.parse_args()
-    cfg = Config.load(args.config)
+    cfg = Config.load()
+    p = argparse.ArgumentParser(description="Event-driven walk-forward backtester (read-only).")
+    p.add_argument("--symbol", default=cfg.symbol)
+    p.add_argument("--interval", default=cfg.interval)
+    p.add_argument("--days", type=int, default=cfg.backtest.days)
+    p.add_argument("--rr", type=float, default=cfg.backtest.rr)
+    p.add_argument("--confidence", type=float, default=cfg.aggregator.threshold)
+    p.add_argument("--minagree", type=int, default=cfg.aggregator.min_agree)
+    p.add_argument("--out", default="backtest_results.json")
+    args = p.parse_args()
+
+    console = Console()
     client = HyperliquidDataClient(testnet=cfg.testnet)
-    df = client.fetch_candles(cfg.symbol, cfg.interval, cfg.lookback)
-    result = walk_forward(df, cfg)
-    result["symbol"] = cfg.symbol
-    result["interval"] = cfg.interval
+    df = client.fetch_candles_days(args.symbol, args.interval, args.days)
+    console.print(f"Fetched {len(df)} bars for {args.symbol} {args.interval} (~{args.days}d).")
+
+    strategies = {name: REGISTRY[name](scfg.params) for name, scfg in cfg.strategies.items() if scfg.enabled}
+    trades = run_backtest(
+        df, strategies,
+        threshold=args.confidence, min_agree=args.minagree, margin=cfg.aggregator.margin,
+        rr=args.rr, atr_period=cfg.backtest.atr_period, atr_mult=cfg.backtest.atr_mult,
+        warmup=cfg.backtest.warmup_bars,
+    )
+    summary = summarize(trades)
+    attr = attribution(trades, list(strategies.keys()))
+    _print_trades(console, trades)
+    _print_attribution(console, attr)
+    console.print(summary)
+
+    result = {
+        "symbol": args.symbol, "interval": args.interval, "days": args.days,
+        "rr": args.rr, "confidence": args.confidence, "min_agree": args.minagree,
+        "margin": cfg.aggregator.margin, "atr_period": cfg.backtest.atr_period,
+        "atr_mult": cfg.backtest.atr_mult, "warmup_bars": cfg.backtest.warmup_bars,
+        "bars": len(df), "trades": trades, "summary": summary, "attribution": attr,
+    }
     with open(args.out, "w", encoding="utf-8") as fh:
         json.dump(result, fh, indent=2, default=str)
-    print(f"Wrote {len(result['trades'])} trades, final equity {result['final_equity']:.2f} -> {args.out}")
+    console.print(f"Saved -> {args.out}")
 
 
 if __name__ == "__main__":

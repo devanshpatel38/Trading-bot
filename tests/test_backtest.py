@@ -1,79 +1,77 @@
-import numpy as np
 import pandas as pd
 import pytest
 
-from hyperbot.config import (
-    Config, StrategyConfig, AggregatorConfig, BacktestConfig
-)
-from hyperbot.backtest import (
-    expand_grid, simulate, metric_value, walk_forward, make_solo_decider
-)
+from hyperbot.backtest import run_backtest, summarize, attribution
 from hyperbot.strategies.base import Strategy, StrategySignal
 
 
-def _ramp_df(n):
-    idx = pd.date_range("2021-01-01", periods=n, freq="15min")
-    close = np.linspace(100, 300, n)
+def _df(rows):  # rows: list of (o,h,l,c)
+    idx = pd.date_range("2021-01-01", periods=len(rows), freq="15min")
     return pd.DataFrame(
-        {"open": close, "high": close + 1, "low": close - 1, "close": close, "volume": 100.0},
+        {"open": [r[0] for r in rows], "high": [r[1] for r in rows],
+         "low": [r[2] for r in rows], "close": [r[3] for r in rows], "volume": 100.0},
         index=idx,
     )
 
 
-class _AlwaysLong(Strategy):
-    name = "always_long"
-
+class _StubLong(Strategy):
+    name = "stub"
+    def __init__(self, fire_at, seen):
+        super().__init__(); self.fire_at = fire_at; self.seen = seen
     def analyze(self, df):
-        return StrategySignal(self.name, 100.0, 0.0, "trending", "stub", df.index[-1])
+        i = len(df) - 1
+        self.seen.append(i)               # record the largest index visible -> no-lookahead check
+        if i == self.fire_at:
+            return StrategySignal(self.name, 100.0, 0.0, "trending", "fire", df.index[-1])
+        return StrategySignal(self.name, 0.0, 0.0, "ranging", "flat", df.index[-1])
 
 
-def test_expand_grid_cartesian_product():
-    combos = expand_grid({"a": 1, "b": 2}, {"a": [1, 2], "b": [3]})
-    assert len(combos) == 2
-    assert {"a": 1, "b": 3} in combos
-    assert {"a": 2, "b": 3} in combos
+def _run(rows, fire_at, warmup=2, rr=2.0):
+    seen = []
+    trades = run_backtest(_df(rows), {"stub": _StubLong(fire_at, seen)},
+                          threshold=50, min_agree=1, margin=15, rr=rr,
+                          atr_period=2, atr_mult=1.0, warmup=warmup)
+    return trades, seen
 
 
-def test_expand_grid_empty_returns_base():
-    assert expand_grid({"a": 1}, {}) == [{"a": 1}]
+def test_long_tp_hit_is_win():
+    # flat bars, fire at index 3 (entry=close=100, ATR(2)=2 -> tp=104). next bar high 130 -> TP.
+    rows = [(100,101,99,100)]*3 + [(100,101,99,100)]   # entry bar i=3 close 100
+    rows += [(100, 130, 100, 120)]                      # next bar high spikes -> TP
+    trades, _ = _run(rows, fire_at=3)
+    assert len(trades) == 1
+    assert trades[0]["side"] == "long"
+    assert trades[0]["outcome"] == "win"
+    assert trades[0]["r_multiple"] == 2.0
+    assert trades[0]["bars_held"] == 1
 
+def test_long_stop_hit_is_loss():
+    rows = [(100,101,99,100)]*3 + [(100,101,99,100)]
+    rows += [(100, 101, 70, 80)]                        # next bar low crashes -> stop (stop=98)
+    trades, _ = _run(rows, fire_at=3)
+    assert trades[0]["outcome"] == "loss"
+    assert trades[0]["r_multiple"] == -1.0
 
-def test_simulate_long_in_uptrend_profits():
-    df = _ramp_df(50)
-    bt_cfg = {"fee": 0.0, "slippage": 0.0, "risk_fraction": 1.0}
-    trades, curve, equity = simulate(
-        df, {"always_long": _AlwaysLong()}, make_solo_decider(50, 10),
-        bt_cfg, start_offset=5, initial_equity=10000.0,
-    )
-    assert equity > 10000.0
-    assert len(trades) >= 1
-    assert trades[0]["side"] == "LONG"
+def test_both_hit_in_bar_is_loss():
+    rows = [(100,101,99,100)]*3 + [(100,101,99,100)]
+    rows += [(100, 130, 70, 100)]                       # both TP and stop inside the bar
+    trades, _ = _run(rows, fire_at=3)
+    assert trades[0]["outcome"] == "loss"
 
+def test_open_at_end_excluded_from_winrate():
+    rows = [(100,101,99,100)]*3 + [(100,101,99,100), (100,101,99,100)]
+    trades, _ = _run(rows, fire_at=3)
+    assert trades[0]["outcome"] == "open"
+    assert summarize(trades)["resolved"] == 0
 
-def test_metric_value_total_return():
-    trades = [{"pnl": 500.0, "return_pct": 5.0}, {"pnl": -100.0, "return_pct": -1.0}]
-    assert metric_value(trades, 10000.0, "total_return") == 0.04
+def test_no_lookahead_window_grows_by_one():
+    rows = [(100,101,99,100)]*8
+    _, seen = _run(rows, fire_at=99)  # never fires
+    assert seen == list(range(2, 8))  # warmup=2 .. n-1, strictly one bar at a time
 
-
-@pytest.mark.skip(
-    reason="Old walk_forward engine reads BacktestConfig fields removed in the "
-    "day-based config (STEP 1); the engine itself is replaced in STEP 2."
-)
-def test_walk_forward_smoke():
-    df = _ramp_df(100)
-    cfg = Config(
-        symbol="BTC", interval="15m", lookback=100, testnet=True,
-        strategies={
-            "ema_trend": StrategyConfig(
-                enabled=True, weight=1.0,
-                params={"fast": 5, "slow": 10, "atr_period": 5, "pullback_atr": 2.0, "trend_min_pct": 0.0},
-                grid={"fast": [5, 8]},
-            )
-        },
-        aggregator=AggregatorConfig(threshold=50, min_agree=3, margin=15),
-        backtest=BacktestConfig(days=30, rr=2.0, atr_period=14, atr_mult=1.5, warmup_bars=15),
-    )
-    result = walk_forward(df, cfg)
-    assert "trades" in result and "equity_curve" in result and "windows" in result
-    assert len(result["windows"]) >= 1
-    assert result["windows"][0]["params"]["ema_trend"]["fast"] in (5, 8)
+def test_attribution_counts_agreement_on_wins():
+    rows = [(100,101,99,100)]*3 + [(100,101,99,100), (100,130,100,120)]
+    trades, _ = _run(rows, fire_at=3)
+    attr = attribution(trades, ["stub"])
+    assert attr["stub"]["agreed_wins"] == 1
+    assert attr["stub"]["win_rate_when_agreed"] == 100.0
