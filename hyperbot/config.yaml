@@ -17,7 +17,7 @@ strategies:
   bb_squeeze:
     enabled: true
     weight: 1.0
-    params: {period: 20, num_std: 2.0, squeeze_lookback: 50, squeeze_quantile: 0.25, vol_lookback: 20}
+    params: {period: 20, num_std: 2.0, squeeze_lookback: 50, squeeze_quantile: 0.25, ema_period: 200}
     grid: {period: [20, 30]}
   fvg:
     enabled: true
