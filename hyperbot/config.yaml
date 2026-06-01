@@ -1,6 +1,6 @@
 testnet: true
 symbol: BTC
-interval: 15m
+interval: 1h
 data:
   lookback: 5000
 strategies:
@@ -30,12 +30,12 @@ strategies:
     params: {fast: 12, slow: 26, signal: 9, ema_period: 200, cross_lookback: 3}
     grid: {fast: [8, 12]}
 aggregator:
-  threshold: 50
-  min_agree: 3
+  threshold: 75
+  min_agree: 4
   margin: 15
 backtest:
-  days: 30
-  rr: 2.0
+  days: 180
+  rr: 3.0
   atr_period: 14
   atr_mult: 1.5
   warmup_bars: 215
