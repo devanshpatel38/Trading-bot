@@ -29,7 +29,7 @@ class HyperliquidDataClient:
             raise ValueError(f"Unsupported interval '{interval}'. Choose from {list(INTERVAL_MS)}")
         end = int(time.time() * 1000)
         start = end - lookback * INTERVAL_MS[interval]
-        raw = self.info.candle_snapshot(symbol, interval, start, end)
+        raw = self.info.candles_snapshot(symbol, interval, start, end)
         if not raw:
             raise ValueError(f"No candles returned for {symbol} {interval}")
         df = pd.DataFrame(raw).rename(
@@ -50,7 +50,7 @@ class HyperliquidDataClient:
         rows: dict[int, dict] = {}
         cursor_end = end
         while cursor_end > start:
-            batch = self.info.candle_snapshot(symbol, interval, start, cursor_end)
+            batch = self.info.candles_snapshot(symbol, interval, start, cursor_end)
             if not batch:
                 break
             for c in batch:

@@ -11,7 +11,7 @@ def test_fetch_candles_builds_dataframe(monkeypatch):
         def __init__(self, *args, **kwargs):
             pass
 
-        def candle_snapshot(self, name, interval, startTime, endTime):
+        def candles_snapshot(self, name, interval, startTime, endTime):
             return raw
 
     monkeypatch.setattr(dc, "Info", FakeInfo)
@@ -33,7 +33,7 @@ def test_fetch_candles_days_paginates(monkeypatch):
         def __init__(self, *a, **k):
             pass
 
-        def candle_snapshot(self, coin, interval, start, end):
+        def candles_snapshot(self, coin, interval, start, end):
             window = [c for c in allc if start <= c["t"] <= end]
             return window[-3:]  # API returns only the most recent <=3 in range
 
@@ -50,7 +50,7 @@ def test_fetch_candles_raises_on_empty(monkeypatch):
         def __init__(self, *args, **kwargs):
             pass
 
-        def candle_snapshot(self, *a, **k):
+        def candles_snapshot(self, *a, **k):
             return []
 
     monkeypatch.setattr(dc, "Info", EmptyInfo)
