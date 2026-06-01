@@ -2,41 +2,27 @@ from __future__ import annotations
 
 import argparse
 import json
-import math
 
 
 def compute_stats(result: dict) -> dict:
     trades = result.get("trades", [])
-    initial = float(result.get("initial_equity", 0.0))
-    final = float(result.get("final_equity", initial))
-    total_pnl = sum(t["pnl"] for t in trades)
-    wins = [t for t in trades if t["pnl"] > 0]
-    win_rate = len(wins) / len(trades) * 100.0 if trades else 0.0
-
-    curve = [p["equity"] for p in result.get("equity_curve", [])] or [initial, final]
-    peak, max_dd = curve[0], 0.0
-    for equity in curve:
-        peak = max(peak, equity)
-        if peak > 0:
-            max_dd = max(max_dd, (peak - equity) / peak * 100.0)
-
-    rets = [t["return_pct"] / 100.0 for t in trades]
-    if len(rets) > 1:
-        mean = sum(rets) / len(rets)
-        var = sum((r - mean) ** 2 for r in rets) / len(rets)
-        std = math.sqrt(var)
-        sharpe = mean / std * math.sqrt(len(rets)) if std > 0 else 0.0
-    else:
-        sharpe = 0.0
-
+    resolved = [t for t in trades if t.get("outcome") in ("win", "loss")]
+    wins = [t for t in resolved if t["outcome"] == "win"]
+    n = len(resolved)
+    total_r = sum(t["r_multiple"] for t in resolved)
+    held = [t["bars_held"] for t in resolved]
     return {
         "trades": len(trades),
-        "total_pnl": round(total_pnl, 2),
-        "return_pct": round((final - initial) / initial * 100.0, 2) if initial else 0.0,
-        "win_rate": round(win_rate, 2),
-        "max_drawdown_pct": round(max_dd, 2),
-        "sharpe": round(sharpe, 3),
-        "final_equity": round(final, 2),
+        "resolved": n,
+        "wins": len(wins),
+        "losses": n - len(wins),
+        "open": sum(1 for t in trades if t.get("outcome") == "open"),
+        "win_rate": round(len(wins) / n * 100, 2) if n else 0.0,
+        "total_r": round(total_r, 3),
+        "expectancy_r": round(total_r / n, 3) if n else 0.0,
+        "avg_bars_held": round(sum(held) / len(held), 2) if held else 0.0,
+        "best_r": max((t["r_multiple"] for t in resolved), default=0.0),
+        "worst_r": min((t["r_multiple"] for t in resolved), default=0.0),
     }
 
 
