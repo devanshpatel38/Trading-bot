@@ -14,5 +14,8 @@ def test_config_loads_defaults():
     assert cfg.aggregator.threshold == 50
     assert cfg.aggregator.min_agree == 3
     assert cfg.aggregator.margin == 15
-    assert cfg.backtest.warmup_bars == 220
-    assert cfg.backtest.metric == "total_return"
+    assert cfg.backtest.warmup_bars == 215
+    assert cfg.backtest.days == 30
+    assert cfg.backtest.rr == 2.0
+    assert cfg.backtest.atr_period == 14
+    assert cfg.backtest.atr_mult == 1.5

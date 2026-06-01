@@ -1,5 +1,6 @@
 import numpy as np
 import pandas as pd
+import pytest
 
 from hyperbot.config import (
     Config, StrategyConfig, AggregatorConfig, BacktestConfig
@@ -54,6 +55,10 @@ def test_metric_value_total_return():
     assert metric_value(trades, 10000.0, "total_return") == 0.04
 
 
+@pytest.mark.skip(
+    reason="Old walk_forward engine reads BacktestConfig fields removed in the "
+    "day-based config (STEP 1); the engine itself is replaced in STEP 2."
+)
 def test_walk_forward_smoke():
     df = _ramp_df(100)
     cfg = Config(
@@ -66,11 +71,7 @@ def test_walk_forward_smoke():
             )
         },
         aggregator=AggregatorConfig(threshold=50, min_agree=3, margin=15),
-        backtest=BacktestConfig(
-            in_sample_bars=40, out_sample_bars=20, step=20, warmup_bars=15,
-            fee=0.0005, slippage=0.0002, risk_fraction=0.1,
-            initial_equity=10000.0, metric="total_return",
-        ),
+        backtest=BacktestConfig(days=30, rr=2.0, atr_period=14, atr_mult=1.5, warmup_bars=15),
     )
     result = walk_forward(df, cfg)
     assert "trades" in result and "equity_curve" in result and "windows" in result

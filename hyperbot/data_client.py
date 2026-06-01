@@ -39,3 +39,33 @@ class HyperliquidDataClient:
         for col in ["open", "high", "low", "close", "volume"]:
             df[col] = df[col].astype(float)
         return df.set_index("time")[["open", "high", "low", "close", "volume"]].sort_index()
+
+    def fetch_candles_days(self, symbol: str, interval: str, days: int) -> pd.DataFrame:
+        """Fetch `days` of candles, paginating backward (API caps ~5000/call)."""
+        if interval not in INTERVAL_MS:
+            raise ValueError(f"Unsupported interval '{interval}'. Choose from {list(INTERVAL_MS)}")
+        step = INTERVAL_MS[interval]
+        end = int(time.time() * 1000)
+        start = end - days * 86_400_000
+        rows: dict[int, dict] = {}
+        cursor_end = end
+        while cursor_end > start:
+            batch = self.info.candle_snapshot(symbol, interval, start, cursor_end)
+            if not batch:
+                break
+            for c in batch:
+                rows[int(c["t"])] = c
+            earliest = min(int(c["t"]) for c in batch)
+            if earliest <= start or earliest >= cursor_end:
+                break  # covered the window, or no backward progress
+            cursor_end = earliest - step
+        if not rows:
+            raise ValueError(f"No candles returned for {symbol} {interval}")
+        ordered = [rows[t] for t in sorted(rows) if t >= start]
+        df = pd.DataFrame(ordered).rename(
+            columns={"t": "time", "o": "open", "h": "high", "l": "low", "c": "close", "v": "volume"}
+        )
+        df["time"] = pd.to_datetime(df["time"], unit="ms")
+        for col in ["open", "high", "low", "close", "volume"]:
+            df[col] = df[col].astype(float)
+        return df.set_index("time")[["open", "high", "low", "close", "volume"]].sort_index()

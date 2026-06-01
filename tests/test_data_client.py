@@ -23,6 +23,28 @@ def test_fetch_candles_builds_dataframe(monkeypatch):
     assert df.index.is_monotonic_increasing
 
 
+def test_fetch_candles_days_paginates(monkeypatch):
+    step = dc.INTERVAL_MS["15m"]
+    # build 7 synthetic candles spaced by `step`
+    base = 1_700_000_000_000
+    allc = [{"t": base + k * step, "o": "1", "h": "2", "l": "0.5", "c": "1.5", "v": "10"} for k in range(7)]
+
+    class FakeInfo:
+        def __init__(self, *a, **k):
+            pass
+
+        def candle_snapshot(self, coin, interval, start, end):
+            window = [c for c in allc if start <= c["t"] <= end]
+            return window[-3:]  # API returns only the most recent <=3 in range
+
+    monkeypatch.setattr(dc, "Info", FakeInfo)
+    client = dc.HyperliquidDataClient(testnet=True)
+    df = client.fetch_candles_days("BTC", "15m", days=9999)  # large window so start<=base
+    assert len(df) == 7
+    assert df.index.is_monotonic_increasing
+    assert df.index.is_unique
+
+
 def test_fetch_candles_raises_on_empty(monkeypatch):
     class EmptyInfo:
         def __init__(self, *args, **kwargs):

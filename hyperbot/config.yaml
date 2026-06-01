@@ -34,12 +34,8 @@ aggregator:
   min_agree: 3
   margin: 15
 backtest:
-  in_sample_bars: 1500
-  out_sample_bars: 500
-  step: 500
-  warmup_bars: 220
-  fee: 0.0005
-  slippage: 0.0002
-  risk_fraction: 0.1
-  initial_equity: 10000
-  metric: total_return
+  days: 30
+  rr: 2.0
+  atr_period: 14
+  atr_mult: 1.5
+  warmup_bars: 215

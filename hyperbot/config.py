@@ -24,15 +24,11 @@ class AggregatorConfig:
 
 @dataclass
 class BacktestConfig:
-    in_sample_bars: int
-    out_sample_bars: int
-    step: int
+    days: int
+    rr: float
+    atr_period: int
+    atr_mult: float
     warmup_bars: int
-    fee: float
-    slippage: float
-    risk_fraction: float
-    initial_equity: float
-    metric: str
 
 
 @dataclass
