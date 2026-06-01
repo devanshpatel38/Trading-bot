@@ -22,7 +22,7 @@ strategies:
   fvg:
     enabled: true
     weight: 1.0
-    params: {atr_period: 14, proximity_atr: 0.25, fvg_lookback: 20}
+    params: {atr_period: 14, proximity_atr: 0.25, fvg_lookback: 20, freshness_bars: 15, ema_period: 200}
     grid: {proximity_atr: [0.25, 0.5]}
   macd_momentum:
     enabled: true

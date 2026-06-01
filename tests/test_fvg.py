@@ -7,31 +7,44 @@ CONF = {0.0, 25.0, 50.0, 75.0, 100.0}
 
 
 def _unfilled_bullish_fvg():
-    """Construct a recent UNFILLED bullish FVG within the lookback, current price within
-    0.25 ATR of the gap, bullish last candle.
+    """Construct a long UPTREND (>=201 bars) so close > EMA200 (htf true), containing a
+    recent UNFILLED bullish FVG within the last 15 bars, current price within 0.25 ATR of
+    the gap edge.
 
-    Bullish gap at j: low[j] > high[j-2]; zone = (high[j-2], low[j]) = (101, 103).
-    All four buy components true: gap exists, unfilled, proximity, bullish confirmation.
+    Bullish gap at j: low[j] > high[j-2]; zone = (high[j-2], low[j]).
+    All four buy components true: unfilled, proximity, freshness, htf.
     """
-    n = 30
-    high = np.full(n, 101.0)
-    low = np.full(n, 99.0)
-    close = np.full(n, 100.0)
-    open_ = np.full(n, 100.0)
+    n = 220
+    # Steadily rising baseline so the last close sits well above EMA200.
+    base = np.linspace(50.0, 250.0, n)
+    high = base + 1.0
+    low = base - 1.0
+    close = base.copy()
+    open_ = base.copy()
 
-    j = n - 4
-    # displacement candle (j-1) and gap candle (j): low[j]=103 > high[j-2]=101
-    high[j - 1], low[j - 1], close[j - 1], open_[j - 1] = 104.0, 100.5, 103.5, 100.5
-    high[j], low[j], close[j], open_[j] = 105.0, 103.0, 104.0, 103.5
-    # bars after j stay above zone_top (103) so the gap remains UNFILLED
+    j = n - 4  # recent gap, age = (n-1)-j = 3 bars <= freshness_bars (15)
+    # gap candle j with low[j] > high[j-2]
+    h2 = float(high[j - 2])
+    zone_top = h2 + 0.3  # low[j]; small jump so price stays within 0.25 ATR of the edge
+    high[j], low[j], close[j], open_[j] = zone_top + 0.2, zone_top, zone_top + 0.1, zone_top + 0.05
+    # bars after j hold a flat plateau just above zone_top so the gap stays UNFILLED
+    # (close > zone_top) and no NEW gap forms (overlapping ranges, equal highs/lows).
     for k in range(j + 1, n):
-        high[k], low[k], close[k], open_[k] = 104.0, 103.2, 103.5, 103.4
-    # final bar near the zone (within 0.25 ATR of top edge 103) and bullish
-    high[-1], low[-1], close[-1], open_[-1] = 103.5, 103.1, 103.2, 103.0
+        high[k] = zone_top + 0.2
+        low[k] = zone_top + 0.05
+        close[k] = zone_top + 0.1
+        open_[k] = zone_top + 0.08
 
     idx = pd.date_range("2021-01-01", periods=n, freq="15min")
     return pd.DataFrame(
-        {"open": open_, "high": high, "low": low, "close": close, "volume": 100.0}, index=idx
+        {
+            "open": pd.Series(open_, index=idx),
+            "high": pd.Series(high, index=idx),
+            "low": pd.Series(low, index=idx),
+            "close": pd.Series(close, index=idx),
+            "volume": pd.Series(np.full(n, 100.0), index=idx),
+        },
+        index=idx,
     )
 
 
@@ -44,11 +57,17 @@ def test_unfilled_bullish_fvg_gives_buy():
 
 
 def test_no_gap_is_balanced():
-    n = 30
+    n = 210
     idx = pd.date_range("2021-01-01", periods=n, freq="15min")
-    close = pd.Series([100.0] * n, index=idx)
+    close = pd.Series(np.full(n, 100.0), index=idx)
     df = pd.DataFrame(
-        {"open": close, "high": close + 1, "low": close - 1, "close": close, "volume": 100.0},
+        {
+            "open": close,
+            "high": close + 1,
+            "low": close - 1,
+            "close": close,
+            "volume": pd.Series(np.full(n, 100.0), index=idx),
+        },
         index=idx,
     )
     sig = FvgStrategy().analyze(df)
@@ -57,11 +76,17 @@ def test_no_gap_is_balanced():
 
 
 def test_insufficient_data_is_neutral():
-    n = 5
+    n = 50
     idx = pd.date_range("2021-01-01", periods=n, freq="15min")
-    close = pd.Series([100.0] * n, index=idx)
+    close = pd.Series(np.full(n, 100.0), index=idx)
     df = pd.DataFrame(
-        {"open": close, "high": close + 1, "low": close - 1, "close": close, "volume": 100.0},
+        {
+            "open": close,
+            "high": close + 1,
+            "low": close - 1,
+            "close": close,
+            "volume": pd.Series(np.full(n, 100.0), index=idx),
+        },
         index=idx,
     )
     sig = FvgStrategy().analyze(df)

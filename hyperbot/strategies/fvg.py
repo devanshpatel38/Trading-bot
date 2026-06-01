@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pandas as pd
 
-from .base import Strategy, StrategySignal, atr, last_timestamp
+from .base import Strategy, StrategySignal, atr, ema, last_timestamp
 
 
 class FvgStrategy(Strategy):
@@ -10,22 +10,29 @@ class FvgStrategy(Strategy):
 
     @staticmethod
     def default_params() -> dict:
-        return {"atr_period": 14, "proximity_atr": 0.25, "fvg_lookback": 20}
+        return {
+            "atr_period": 14,
+            "proximity_atr": 0.25,
+            "fvg_lookback": 20,
+            "freshness_bars": 15,
+            "ema_period": 200,
+        }
 
     def analyze(self, df: pd.DataFrame) -> StrategySignal:
         p = self.params
-        if len(df) < max(p["fvg_lookback"], p["atr_period"]) + 3:
+        if len(df) < p["ema_period"] + 1:
             return self.neutral(df, "insufficient data")
 
         a = float(atr(df, p["atr_period"]).iloc[-1])
         if pd.isna(a) or a <= 0:
             return self.neutral(df, "ATR unavailable")
 
-        high, low, close, open_ = df["high"], df["low"], df["close"], df["open"]
+        high, low, close = df["high"], df["low"], df["close"]
+        ema200 = ema(close, p["ema_period"])
         n = len(df)
         c = float(close.iloc[-1])
 
-        # Scan the most recent fvg_lookback bars for the LATEST qualifying FVG.
+        # Gate: scan the most recent fvg_lookback bars for the LATEST qualifying FVG.
         start = max(2, n - p["fvg_lookback"])
         latest = None  # (direction, j, zone_bottom, zone_top)
         for j in range(start, n):
@@ -43,14 +50,14 @@ class FvgStrategy(Strategy):
 
         direction, j, zone_bottom, zone_top = latest
 
-        # (2) Unfilled (close-based): no close after j re-entered the zone.
+        # (1) Unfilled (close-based): no close after j re-entered the zone.
         if direction == "bull":
             filled = any(float(close.iloc[k]) < zone_top for k in range(j + 1, n))
         else:
             filled = any(float(close.iloc[k]) > zone_bottom for k in range(j + 1, n))
         unfilled = not filled
 
-        # (3) Proximity gate: distance from c to nearest zone edge <= proximity_atr*a (0 if inside).
+        # (2) Proximity: distance from c to nearest zone edge <= proximity_atr*a (0 if inside).
         if c < zone_bottom:
             dist = zone_bottom - c
         elif c > zone_top:
@@ -59,14 +66,17 @@ class FvgStrategy(Strategy):
             dist = 0.0
         proximity = dist <= p["proximity_atr"] * a
 
-        # (4) Direction confirmation.
-        o = float(open_.iloc[-1])
-        if direction == "bull":
-            confirm = c > o
-        else:
-            confirm = c < o
+        # (3) Freshness: gap age in bars <= freshness_bars.
+        freshness = ((n - 1) - j) <= p["freshness_bars"]
 
-        comps = [True, unfilled, proximity, confirm]
+        # (4) HTF: price on the correct side of EMA200.
+        e = float(ema200.iloc[-1])
+        if direction == "bull":
+            htf = c > e
+        else:
+            htf = c < e
+
+        comps = [unfilled, proximity, freshness, htf]
         score = 25.0 * sum(comps)
         if direction == "bull":
             buy, sell = score, 0.0
@@ -77,8 +87,8 @@ class FvgStrategy(Strategy):
 
         regime = "imbalance"
         reason = (
-            f"gap={25 * int(comps[0])} unfilled={25 * int(comps[1])} "
-            f"prox={25 * int(comps[2])} confirm={25 * int(comps[3])} "
+            f"unfilled={25 * int(comps[0])} prox={25 * int(comps[1])} "
+            f"fresh={25 * int(comps[2])} htf={25 * int(comps[3])} "
             f"-> {label} {int(score)}"
         )
         return StrategySignal(self.name, buy, sell, regime, reason, last_timestamp(df))
