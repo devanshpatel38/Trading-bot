@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pandas as pd
 
-from .base import Strategy, StrategySignal, bollinger_bands, ema, last_timestamp
+from .base import Strategy, StrategySignal, bollinger_bands, last_timestamp
 
 
 class BbSqueezeStrategy(Strategy):
@@ -14,55 +14,71 @@ class BbSqueezeStrategy(Strategy):
             "period": 20,
             "num_std": 2.0,
             "squeeze_lookback": 50,
-            "squeeze_quantile": 0.25,
-            "ema_period": 200,
+            "squeeze_pct": 0.30,
+            "vol_lookback": 20,
         }
 
     def analyze(self, df: pd.DataFrame) -> StrategySignal:
         p = self.params
-        if len(df) < max(p["period"] + p["squeeze_lookback"], p["ema_period"] + 1):
+        if len(df) < p["period"] + p["squeeze_lookback"]:
             return self.neutral(df, "insufficient data")
 
         close = df["close"]
+        open_ = df["open"]
+        volume = df["volume"]
         upper, mid, lower = bollinger_bands(close, p["period"], p["num_std"])
-        bw = (upper - lower) / mid
-        ema200 = ema(close, p["ema_period"])
-        bw_thresh = float(bw.iloc[-p["squeeze_lookback"]:].quantile(p["squeeze_quantile"]))
+        width = (upper - lower) / mid
+        vol_avg = volume.rolling(p["vol_lookback"]).mean()
 
         c = float(close.iloc[-1])
+        o = float(open_.iloc[-1])
         u = float(upper.iloc[-1])
         l = float(lower.iloc[-1])
-        e = float(ema200.iloc[-1])
+        w = float(width.iloc[-1])
+        v = float(volume.iloc[-1])
+        va = float(vol_avg.iloc[-1])
 
-        squeeze = float(bw.iloc[-2]) <= bw_thresh
-        expansion = float(bw.iloc[-1]) > float(bw.iloc[-2])
+        # (1) Squeeze: current BB width in the BOTTOM 30% of its last 50-bar range,
+        #     i.e. width[-1] <= the 30th-percentile of the last `squeeze_lookback` widths.
+        w_thresh = float(width.iloc[-p["squeeze_lookback"]:].quantile(p["squeeze_pct"]))
+        squeeze = w <= w_thresh
+
+        # (2) Breakout (directional).
         breakout_up = c > u
         breakout_dn = c < l
-        htf_up = c > e
-        htf_dn = c < e
 
-        buy_comps = [squeeze, expansion, breakout_up, htf_up]
-        sell_comps = [squeeze, expansion, breakout_dn, htf_dn]
-        buy = 25.0 * sum(buy_comps)
-        sell = 25.0 * sum(sell_comps)
+        # (3) Volume: PROPORTIONAL up to 25 (shared, directionless).
+        #     pts = 25 * clamp(volume[-1]/vol_avg[-1] - 1.0, 0.0, 1.0)
+        #     so volume >= 2x avg -> 25, volume <= avg -> 0; continuous in between.
+        if pd.isna(va) or va <= 0:
+            vol_pts = 0.0
+        else:
+            ratio = v / va
+            vol_pts = 25.0 * max(0.0, min(1.0, ratio - 1.0))
+
+        # (4) Candle direction.
+        candle_up = c > o
+        candle_dn = c < o
+
+        squeeze_pts = 25.0 if squeeze else 0.0
+        buy = squeeze_pts + (25.0 if breakout_up else 0.0) + vol_pts + (25.0 if candle_up else 0.0)
+        sell = squeeze_pts + (25.0 if breakout_dn else 0.0) + vol_pts + (25.0 if candle_dn else 0.0)
 
         if breakout_up or breakout_dn:
             regime = "expansion"
         elif squeeze:
             regime = "squeeze"
         else:
-            regime = "ranging"
+            regime = "normal"
 
         if buy >= sell:
             reason = (
-                f"squeeze={25 * int(buy_comps[0])} expansion={25 * int(buy_comps[1])} "
-                f"breakout={25 * int(buy_comps[2])} htf={25 * int(buy_comps[3])} "
-                f"-> buy {int(buy)}"
+                f"squeeze={squeeze_pts:g} breakout={25 if breakout_up else 0} "
+                f"volume={vol_pts:g} candle={25 if candle_up else 0} -> buy {buy:g}"
             )
         else:
             reason = (
-                f"squeeze={25 * int(sell_comps[0])} expansion={25 * int(sell_comps[1])} "
-                f"breakout={25 * int(sell_comps[2])} htf={25 * int(sell_comps[3])} "
-                f"-> sell {int(sell)}"
+                f"squeeze={squeeze_pts:g} breakout={25 if breakout_dn else 0} "
+                f"volume={vol_pts:g} candle={25 if candle_dn else 0} -> sell {sell:g}"
             )
         return StrategySignal(self.name, buy, sell, regime, reason, last_timestamp(df))
