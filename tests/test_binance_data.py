@@ -53,3 +53,32 @@ def test_rows_to_df_shape_types_dedup():
     assert df.index.is_monotonic_increasing
     assert df.index.is_unique               # duplicate openTime collapsed
     assert len(df) == 5
+
+
+def test_load_klines_uses_cache_without_network(tmp_path, monkeypatch):
+    # Pre-seed a cache CSV; load_klines must read it and NOT fetch.
+    df = bd._rows_to_df(_universe(10))
+    cache = tmp_path / "binance"
+    cache.mkdir()
+    df.to_csv(cache / "BTCUSDT_1h.csv")
+
+    def _boom(*a, **k):
+        raise AssertionError("network must not be called when cache exists")
+    monkeypatch.setattr(bd, "fetch_klines", _boom)
+
+    out = bd.load_klines("BTCUSDT", "1h", cache_dir=str(cache))
+    assert len(out) == 10
+    assert list(out.columns) == ["open", "high", "low", "close", "volume"]
+    assert out.index.name == "time"
+
+
+def test_partition_three_contiguous_segments():
+    idx = pd.date_range("2020-01-01", periods=400 * 24, freq="h")  # 400 days hourly
+    df = pd.DataFrame({"open": 1.0, "high": 1.0, "low": 1.0, "close": 1.0, "volume": 1.0}, index=idx)
+    holdout, val, tuning = bd.partition(df, tuning_overlap_days=50, validation_years=200 / 365)
+    # tuning = last 50 days, validation = 200 days before that, holdout = remainder (~150 days)
+    assert (tuning.index.max() - tuning.index.min()).days == 50
+    assert (val.index.max() - val.index.min()).days == 199
+    # contiguous + complete: no overlap, full coverage
+    assert holdout.index.max() < val.index.min() < tuning.index.min()
+    assert len(holdout) + len(val) + len(tuning) == len(df)

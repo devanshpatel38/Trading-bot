@@ -48,3 +48,27 @@ def _rows_to_df(rows: list) -> pd.DataFrame:
     for col in ["open", "high", "low", "close", "volume"]:
         df[col] = df[col].astype(float)
     return df.drop_duplicates("time").set_index("time").sort_index()
+
+
+def load_klines(symbol: str, interval: str, cache_dir: str = CACHE_DIR, refresh: bool = False) -> pd.DataFrame:
+    """Full-history klines, cached to CSV. Returns the same shape as HyperliquidDataClient.fetch_candles."""
+    path = os.path.join(cache_dir, f"{symbol}_{interval}.csv")
+    if os.path.exists(path) and not refresh:
+        return pd.read_csv(path, parse_dates=["time"], index_col="time")
+    start = 1_483_228_800_000          # 2017-01-01 UTC (Binance returns from listing date)
+    end = int(time.time() * 1000)
+    df = _rows_to_df(fetch_klines(symbol, interval, start, end))
+    os.makedirs(cache_dir, exist_ok=True)
+    df.to_csv(path)
+    return df
+
+
+def partition(df: pd.DataFrame, tuning_overlap_days: int = 208, validation_years: float = 2.0):
+    """Chronological 3-way split: (holdout, validation, tuning)."""
+    end = df.index[-1]
+    tuning_start = end - pd.Timedelta(days=tuning_overlap_days)
+    val_start = tuning_start - pd.Timedelta(days=round(365 * validation_years))
+    holdout = df[df.index < val_start]
+    validation = df[(df.index >= val_start) & (df.index < tuning_start)]
+    tuning = df[df.index >= tuning_start]
+    return holdout, validation, tuning
