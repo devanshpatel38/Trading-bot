@@ -90,3 +90,27 @@ def test_attribution_counts_agreement_on_wins():
     attr = attribution(trades, ["stub"])
     assert attr["stub"]["agreed_wins"] == 1
     assert attr["stub"]["win_rate_when_agreed"] == 100.0
+
+class _AlwaysLong(Strategy):
+    name = "stub"
+    def analyze(self, df):
+        return StrategySignal(self.name, 100.0, 0.0, "trending", "fire", df.index[-1])
+
+
+def test_one_per_day_caps_entries():
+    # 6 bars, all on 2021-01-01 (15min apart). Without the cap, two trades enter same day.
+    rows = [
+        (100, 101, 99, 100),   # 0 warmup
+        (100, 101, 99, 100),   # 1 warmup
+        (100, 101, 99, 100),   # 2 enter long (atr=2 -> stop 98, tp 104)
+        (100, 130, 99, 110),   # 3 high 130 -> TP win, close
+        (100, 101, 99, 100),   # 4 flat -> would enter again (same day)
+        (100, 130, 99, 110),   # 5
+    ]
+    df = _df(rows)
+    off = run_backtest(df, {"stub": _AlwaysLong()}, threshold=50, min_agree=1, margin=15,
+                       rr=2.0, atr_period=2, atr_mult=1.0, warmup=2, one_per_day=False)
+    on = run_backtest(df, {"stub": _AlwaysLong()}, threshold=50, min_agree=1, margin=15,
+                      rr=2.0, atr_period=2, atr_mult=1.0, warmup=2, one_per_day=True)
+    assert len(off) >= 2          # two same-day entries without the cap
+    assert len(on) == 1           # cap permits only the first entry that day

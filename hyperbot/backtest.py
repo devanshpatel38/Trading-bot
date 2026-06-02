@@ -15,13 +15,18 @@ from .strategies.aggregator import aggregate
 
 
 def run_backtest(df, strategies, *, threshold, min_agree, margin, rr,
-                 atr_period=14, atr_mult=1.5, warmup=215, fee=0.0, slippage=0.0):
-    """Walk bars one at a time (no lookahead); one trade at a time."""
+                 atr_period=14, atr_mult=1.5, warmup=215, fee=0.0, slippage=0.0,
+                 one_per_day=False):
+    """Walk bars one at a time (no lookahead); one trade at a time.
+
+    one_per_day: if True, take at most one entry per calendar day.
+    """
     atr_series = atr(df, atr_period)
     closes, highs, lows = df["close"].values, df["high"].values, df["low"].values
     index = df.index
     trades = []
     open_trade = None
+    last_entry_date = None
     n = len(df)
     for i in range(warmup, n):
         if open_trade is not None:
@@ -62,6 +67,10 @@ def run_backtest(df, strategies, *, threshold, min_agree, margin, rr,
         a = float(atr_series.iloc[i])
         if pd.isna(a) or a <= 0:
             continue
+        bar_date = index[i].date()
+        if one_per_day and bar_date == last_entry_date:
+            continue  # already entered a trade today
+        last_entry_date = bar_date
         entry = float(closes[i])
         stop_dist = atr_mult * a
         if agg.recommendation == "long":
