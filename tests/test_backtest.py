@@ -114,3 +114,18 @@ def test_one_per_day_caps_entries():
                       rr=2.0, atr_period=2, atr_mult=1.0, warmup=2, one_per_day=True)
     assert len(off) >= 2          # two same-day entries without the cap
     assert len(on) == 1           # cap permits only the first entry that day
+
+
+def test_max_window_caps_window_length():
+    df = _df([(100, 101, 99, 100)] * 30)
+    seen = []
+
+    class _Recorder(Strategy):
+        name = "stub"
+        def analyze(self, d):
+            seen.append(len(d))
+            return StrategySignal(self.name, 0.0, 0.0, "x", "flat", d.index[-1])
+
+    run_backtest(df, {"stub": _Recorder()}, threshold=50, min_agree=1, margin=15,
+                 rr=2.0, atr_period=2, atr_mult=1.0, warmup=2, max_window=5)
+    assert seen and max(seen) <= 5

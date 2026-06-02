@@ -16,10 +16,14 @@ from .strategies.aggregator import aggregate
 
 def run_backtest(df, strategies, *, threshold, min_agree, margin, rr,
                  atr_period=14, atr_mult=1.5, warmup=215, fee=0.0, slippage=0.0,
-                 one_per_day=False):
+                 one_per_day=False, max_window=None):
     """Walk bars one at a time (no lookahead); one trade at a time.
 
     one_per_day: if True, take at most one entry per calendar day.
+    max_window: if set, feed strategies only the trailing `max_window` bars instead of
+        the full history. All indicators look back <= ~200 bars, so a window comfortably
+        above that (e.g. 600) yields effectively identical signals while turning the
+        bar-by-bar scan from O(n^2) into O(n) — needed for large (15m) datasets.
     """
     atr_series = atr(df, atr_period)
     closes, highs, lows = df["close"].values, df["high"].values, df["low"].values
@@ -59,7 +63,8 @@ def run_backtest(df, strategies, *, threshold, min_agree, margin, rr,
                 open_trade = None
             continue  # no new signal while managing/closing a trade
 
-        window = df.iloc[: i + 1]  # only past + current bar -> no lookahead
+        w_start = 0 if max_window is None else max(0, i - max_window + 1)
+        window = df.iloc[w_start: i + 1]  # only past + current bar -> no lookahead
         sigs = [s.analyze(window) for s in strategies.values()]
         agg = aggregate(sigs, threshold, min_agree, margin)
         if agg.recommendation not in ("long", "short"):
