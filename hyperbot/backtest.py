@@ -10,13 +10,13 @@ from rich.table import Table
 from .config import Config
 from .data_client import HyperliquidDataClient
 from .strategies import REGISTRY
-from .strategies.base import atr
+from .strategies.base import atr, ema
 from .strategies.aggregator import aggregate
 
 
 def run_backtest(df, strategies, *, threshold, min_agree, margin, rr,
                  atr_period=14, atr_mult=1.5, warmup=215, fee=0.0, slippage=0.0,
-                 one_per_day=False, max_window=None):
+                 one_per_day=False, max_window=None, htf_period=None):
     """Walk bars one at a time (no lookahead); one trade at a time.
 
     one_per_day: if True, take at most one entry per calendar day.
@@ -26,6 +26,7 @@ def run_backtest(df, strategies, *, threshold, min_agree, margin, rr,
         bar-by-bar scan from O(n^2) into O(n) — needed for large (15m) datasets.
     """
     atr_series = atr(df, atr_period)
+    htf_ema = ema(df["close"], htf_period) if htf_period else None
     closes, highs, lows = df["close"].values, df["high"].values, df["low"].values
     index = df.index
     trades = []
@@ -77,6 +78,12 @@ def run_backtest(df, strategies, *, threshold, min_agree, margin, rr,
             continue  # already entered a trade today
         last_entry_date = bar_date
         entry = float(closes[i])
+        if htf_period is not None:
+            h = float(htf_ema.iloc[i])
+            if agg.recommendation == "long" and not (entry > h):
+                continue
+            if agg.recommendation == "short" and not (entry < h):
+                continue
         stop_dist = atr_mult * a
         if agg.recommendation == "long":
             stop, tp = entry - stop_dist, entry + rr * stop_dist
@@ -176,6 +183,7 @@ def main():
         rr=args.rr, atr_period=cfg.backtest.atr_period, atr_mult=cfg.backtest.atr_mult,
         warmup=cfg.backtest.warmup_bars,
         fee=cfg.backtest.fee, slippage=cfg.backtest.slippage,
+        htf_period=cfg.backtest.htf_period,
     )
     summary = summarize(trades)
     attr = attribution(trades, list(strategies.keys()))

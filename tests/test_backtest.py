@@ -116,6 +116,24 @@ def test_one_per_day_caps_entries():
     assert len(on) == 1           # cap permits only the first entry that day
 
 
+def test_htf_filter_blocks_counter_trend():
+    # _AlwaysLong always signals LONG. With htf_period=5, the long entry is only
+    # allowed when entry (close) is ABOVE the HTF EMA(5).
+    # Rising prices -> close > EMA(5) -> entry allowed (>=1 trade).
+    up = [(p, p + 1, p - 1, p) for p in range(100, 130)]
+    up_trades = run_backtest(_df(up), {"stub": _AlwaysLong()},
+                             threshold=50, min_agree=1, margin=15, rr=2.0,
+                             atr_period=2, atr_mult=1.0, warmup=2, htf_period=5)
+    assert len(up_trades) >= 1
+
+    # Falling prices -> close < EMA(5) -> long entry blocked (0 trades).
+    down = [(p, p + 1, p - 1, p) for p in range(130, 100, -1)]
+    down_trades = run_backtest(_df(down), {"stub": _AlwaysLong()},
+                               threshold=50, min_agree=1, margin=15, rr=2.0,
+                               atr_period=2, atr_mult=1.0, warmup=2, htf_period=5)
+    assert len(down_trades) == 0
+
+
 def test_max_window_caps_window_length():
     df = _df([(100, 101, 99, 100)] * 30)
     seen = []

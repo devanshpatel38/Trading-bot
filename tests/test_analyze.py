@@ -14,7 +14,7 @@ def _cfg():
             "rsi_meanrev": StrategyConfig(True, 1.0, {"period": 14}, {}),
         },
         aggregator=AggregatorConfig(50, 3, 15),
-        backtest=BacktestConfig(days=30, rr=2.0, atr_period=14, atr_mult=1.5, warmup_bars=15),
+        backtest=BacktestConfig(days=30, rr=2.0, atr_period=14, atr_mult=1.5, warmup_bars=15, htf_period=800),
     )
 
 
