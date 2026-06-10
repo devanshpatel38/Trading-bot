@@ -1,0 +1,40 @@
+name: BTC Signal Notify
+
+on:
+  schedule:
+    - cron: '2 * * * *'   # 2 min past every hour — 1h candle has closed
+  workflow_dispatch:        # manual trigger for testing
+
+permissions:
+  contents: write           # needed to commit state.json back
+
+jobs:
+  notify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run signal notifier
+        env:
+          NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
+        run: python -m hyperbot.notifier
+
+      - name: Commit state if changed
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git diff --quiet state.json || (
+            git add state.json &&
+            git commit -m "chore: update signal state [skip ci]" &&
+            git push
+          )
