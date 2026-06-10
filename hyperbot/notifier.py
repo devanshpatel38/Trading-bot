@@ -120,7 +120,7 @@ def notify(prev_state: dict, trades: list, new_signal_trade: dict | None,
                 title = f"BTC Trade {outcome} {emoji}"
                 r = resolved_match["r_multiple"]
                 side = resolved_match["side"].upper()
-                body = (f"{side} {resolved_match['entry']:.2f} → "
+                body = (f"{side} {resolved_match['entry']:.2f} > "
                         f"{resolved_match['exit_price']:.2f} | {r:+.2f}R")
             else:
                 prev_trade = prev_state.get("trade") or {}
@@ -176,7 +176,7 @@ def main() -> None:
 
     new_state = notify(prev, trades, new_signal_trade, topic)
     save_state(new_state)
-    print(f"[notifier] State: {prev['state']} → {new_state['state']}")
+    print(f"[notifier] State: {prev['state']} -> {new_state['state']}")
 
 
 if __name__ == "__main__":
