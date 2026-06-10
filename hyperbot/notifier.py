@@ -13,7 +13,7 @@ from .strategies.base import atr, ema
 from .strategies.aggregator import aggregate
 from .backtest import run_backtest
 
-STATE_PATH = Path("state.json")
+STATE_PATH = Path(__file__).parent.parent / "state.json"
 NTFY_BASE = "https://ntfy.sh"
 
 
@@ -31,12 +31,13 @@ def save_state(state: dict, path: Path = STATE_PATH) -> None:
 def send_ntfy(title: str, body: str, topic: str, priority: str = "default") -> None:
     """POST to ntfy.sh. Non-fatal — logs on failure, never raises."""
     try:
-        requests.post(
+        resp = requests.post(
             f"{NTFY_BASE}/{topic}",
             data=body.encode("utf-8"),
             headers={"Title": title, "Priority": priority},
             timeout=10,
         )
+        resp.raise_for_status()
     except Exception as exc:
         print(f"[notifier] ntfy.sh POST failed: {exc}")
 
