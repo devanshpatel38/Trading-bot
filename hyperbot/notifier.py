@@ -101,11 +101,11 @@ def notify(prev_state: dict, trades: list, new_signal_trade: dict | None,
         if prev_state["state"] == "flat" and curr_state == "new_signal":
             t = new_signal_trade
             side = t["side"].upper()
-            emoji = "🟢" if t["side"] == "long" else "🔴"
-            title = f"BTC {side} Signal {emoji}"
-            body = f"entry {t['entry']:.2f} | SL {t['stop']:.2f} | TP {t['tp']:.2f}"
+            emoji = "[LONG]" if t["side"] == "long" else "[SHORT]"
+            title = f"BTC {side} Signal"
+            body = f"{emoji} entry {t['entry']:.2f} | SL {t['stop']:.2f} | TP {t['tp']:.2f}"
             send_ntfy(title, body, topic, priority="high")
-            print(f"[notifier] Sent: {title} — {body}")
+            print(f"[notifier] Sent: {title} - {body}")
 
         elif prev_state["state"] == "open" and curr_state == "flat":
             prev_entry_time = (prev_state.get("trade") or {}).get("entry_time")
@@ -116,24 +116,24 @@ def notify(prev_state: dict, trades: list, new_signal_trade: dict | None,
             )
             if resolved_match:
                 outcome = resolved_match["outcome"].upper()
-                emoji = "✅" if resolved_match["outcome"] == "win" else "❌"
-                title = f"BTC Trade {outcome} {emoji}"
+                emoji = "[WIN]" if resolved_match["outcome"] == "win" else "[LOSS]"
+                title = f"BTC Trade {outcome}"
                 r = resolved_match["r_multiple"]
                 side = resolved_match["side"].upper()
-                body = (f"{side} {resolved_match['entry']:.2f} > "
+                body = (f"{emoji} {side} {resolved_match['entry']:.2f} > "
                         f"{resolved_match['exit_price']:.2f} | {r:+.2f}R")
             else:
                 prev_trade = prev_state.get("trade") or {}
                 title = "BTC Trade Closed"
                 side = prev_trade.get("side", "?").upper()
                 entry = prev_trade.get("entry", 0.0)
-                body = f"{side} {entry:.2f} — outcome unknown"
+                body = f"{side} {entry:.2f} - outcome unknown"
             send_ntfy(title, body, topic)
-            print(f"[notifier] Sent: {title} — {body}")
+            print(f"[notifier] Sent: {title} - {body}")
 
         else:
             print(f"[notifier] No state change "
-                  f"(prev={prev_state['state']}, curr={curr_state}) — silent")
+                  f"(prev={prev_state['state']}, curr={curr_state}) - silent")
 
     return {
         "state": "open" if curr_state in ("open", "new_signal") else "flat",
