@@ -35,6 +35,21 @@ class BacktestConfig:
 
 
 @dataclass
+class OIFilterConfig:
+    """OI-regime overlay. When enabled, entries are taken only in `trade_regime`
+    (30-day smoothed OI delta), managed with a partial scale-out + breakeven."""
+    enabled: bool = False
+    source: str = "BTCUSDT"          # Binance USDT-M symbol for OI
+    window_hours: int = 720          # 30-day delta lookback
+    avg_hours: int = 24              # smoothing window on both endpoints
+    trade_regime: str = "chop"       # only enter in this regime
+    partial_frac: float = 0.5        # fraction taken at the partial level
+    partial_r: float = 2.0           # R level for the partial + breakeven move
+    breakeven_r: float = 2.0         # move stop to entry once price reaches this R
+    recent_days: int = 50            # live OI fetch window (notifier)
+
+
+@dataclass
 class Config:
     symbol: str
     interval: str
@@ -43,6 +58,7 @@ class Config:
     strategies: dict
     aggregator: AggregatorConfig
     backtest: BacktestConfig
+    oi_filter: OIFilterConfig = field(default_factory=OIFilterConfig)
     api_key: str | None = None
     api_secret: str | None = None
 
@@ -68,6 +84,7 @@ class Config:
             strategies=strategies,
             aggregator=AggregatorConfig(**raw["aggregator"]),
             backtest=BacktestConfig(**raw["backtest"]),
+            oi_filter=OIFilterConfig(**raw.get("oi_filter", {})),
             api_key=os.getenv("HL_API_KEY"),
             api_secret=os.getenv("HL_API_SECRET"),
         )

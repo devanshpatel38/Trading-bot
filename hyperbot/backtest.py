@@ -11,12 +11,65 @@ from .config import Config
 from .data_client import HyperliquidDataClient
 from .strategies import REGISTRY
 from .strategies.base import atr, ema
-from .strategies.aggregator import aggregate
+from .strategies.aggregator import aggregate, aggregate_regime
+
+
+# Per-regime trade management. rr = TP target (R). partial = (fraction, level_R)
+# scaled out early. breakeven_r = move stop to entry once price reaches +Nx risk.
+# htf = whether the EMA(htf_period) trend filter gates entries in this regime.
+# weak_expansion & profit_taking share management: scale 50% out at 2R, move stop to
+# breakeven at that same 2R level, let the runner go to 3R.
+REGIME_RULES = {
+    "high_fuel":      {"rr": 3.0, "partial": None,       "breakeven_r": None, "htf": True},
+    "weak_expansion": {"rr": 3.0, "partial": (0.5, 2.0), "breakeven_r": 2.0,  "htf": True},
+    "chop":           {"rr": 3.0, "partial": None,       "breakeven_r": None, "htf": True},
+    "profit_taking":  {"rr": 3.0, "partial": (0.5, 2.0), "breakeven_r": 2.0,  "htf": True},
+    "bleeding":       {"rr": 3.0, "partial": None,       "breakeven_r": None, "htf": False},
+}
+
+
+def _close_trade(ot, exit_price, i, index, fee, slippage):
+    """Finalize an open trade at exit_price, computing R across partial + runner legs.
+
+    Reduces exactly to the single-leg model (gross +rr / -1, cost on entry+exit) when
+    the trade never scaled and never moved to breakeven.
+    """
+    entry, sd, rr_t = ot["entry"], ot["stop_dist"], ot["rr"]
+    fp = ot["partial_frac"] if ot["scaled"] else 0.0
+    fr = 1.0 - fp
+    if exit_price == ot["tp"]:
+        runner_r = rr_t
+    elif ot["be_moved"] and exit_price == entry:
+        runner_r = 0.0
+    else:  # original stop
+        runner_r = -1.0
+    partial_r = ot["partial_level_r"] if ot["scaled"] else 0.0
+    gross_r = fp * partial_r + fr * runner_r
+
+    fs = fee + slippage
+    if sd > 0:
+        cost_r = fs * entry / sd                       # entry, full size
+        cost_r += fs * exit_price / sd * fr            # runner exit
+        if ot["scaled"]:
+            cost_r += fs * ot["partial_exit"] / sd * fp  # partial exit
+    else:
+        cost_r = 0.0
+    net_r = gross_r - cost_r
+    ot.update({
+        "outcome": "win" if net_r > 0 else "loss",
+        "exit_time": str(index[i]),
+        "exit_price": exit_price,
+        "bars_held": i - ot.pop("_entry_i"),
+        "gross_r": round(gross_r, 4),
+        "cost_r": round(cost_r, 4),
+        "r_multiple": round(net_r, 4),
+    })
 
 
 def run_backtest(df, strategies, *, threshold, min_agree, margin, rr,
                  atr_period=14, atr_mult=1.5, warmup=215, fee=0.0, slippage=0.0,
-                 one_per_day=False, max_window=None, htf_period=None):
+                 one_per_day=False, max_window=None, htf_period=None,
+                 regime_series=None, regime_rules=None, enabled_regimes=None):
     """Walk bars one at a time (no lookahead); one trade at a time.
 
     one_per_day: if True, take at most one entry per calendar day.
@@ -24,7 +77,13 @@ def run_backtest(df, strategies, *, threshold, min_agree, margin, rr,
         the full history. All indicators look back <= ~200 bars, so a window comfortably
         above that (e.g. 600) yields effectively identical signals while turning the
         bar-by-bar scan from O(n^2) into O(n) — needed for large (15m) datasets.
+    regime_series: optional str Series aligned to df.index giving the OI regime per bar.
+        When provided, entries use aggregate_regime() and management uses REGIME_RULES
+        (per-regime RR, partial scale-out, breakeven, HTF toggle). The regime is fixed at
+        entry and governs the trade for its whole life. When None, behaviour is identical
+        to the agreement-based aggregator with a single fixed rr/stop/tp.
     """
+    rules_map = regime_rules or REGIME_RULES
     atr_series = atr(df, atr_period)
     htf_ema = ema(df["close"], htf_period) if htf_period else None
     closes, highs, lows = df["close"].values, df["high"].values, df["low"].values
@@ -35,40 +94,71 @@ def run_backtest(df, strategies, *, threshold, min_agree, margin, rr,
     n = len(df)
     for i in range(warmup, n):
         if open_trade is not None:
+            ot = open_trade
             hi, lo = float(highs[i]), float(lows[i])
-            if open_trade["side"] == "long":
-                hit_stop, hit_tp = lo <= open_trade["stop"], hi >= open_trade["tp"]
+            if ot["side"] == "long":
+                hit_stop = lo <= ot["stop"]
+                hit_tp = hi >= ot["tp"]
+                hit_partial = ot["partial_price"] is not None and not ot["scaled"] and hi >= ot["partial_price"]
+                hit_be = ot["be_price"] is not None and not ot["be_moved"] and hi >= ot["be_price"]
             else:
-                hit_stop, hit_tp = hi >= open_trade["stop"], lo <= open_trade["tp"]
-            outcome = None
-            if hit_stop:           # conservative: stop wins ties
-                outcome = "loss"
-            elif hit_tp:
-                outcome = "win"
-            if outcome is not None:
-                exit_price = open_trade["stop"] if outcome == "loss" else open_trade["tp"]
-                stop_dist = abs(open_trade["entry"] - open_trade["stop"])
-                gross_r = rr if outcome == "win" else -1.0
-                cost_r = ((fee + slippage) * (open_trade["entry"] + exit_price) / stop_dist) if stop_dist > 0 else 0.0
-                net_r = gross_r - cost_r
-                open_trade.update({
-                    "outcome": outcome,
-                    "exit_time": str(index[i]),
-                    "exit_price": exit_price,
-                    "bars_held": i - open_trade.pop("_entry_i"),
-                    "gross_r": gross_r,
-                    "cost_r": round(cost_r, 4),
-                    "r_multiple": round(net_r, 4),
-                })
-                trades.append(open_trade)
+                hit_stop = hi >= ot["stop"]
+                hit_tp = lo <= ot["tp"]
+                hit_partial = ot["partial_price"] is not None and not ot["scaled"] and lo <= ot["partial_price"]
+                hit_be = ot["be_price"] is not None and not ot["be_moved"] and lo <= ot["be_price"]
+
+            if hit_stop:                       # conservative: stop wins all ties
+                _close_trade(ot, ot["stop"], i, index, fee, slippage)
+                trades.append(ot)
                 open_trade = None
+            elif hit_tp:
+                if hit_partial:                # bank the partial leg before the runner exits
+                    ot["scaled"] = True
+                    ot["partial_exit"] = ot["partial_price"]
+                _close_trade(ot, ot["tp"], i, index, fee, slippage)
+                trades.append(ot)
+                open_trade = None
+            else:
+                if hit_partial:
+                    ot["scaled"] = True
+                    ot["partial_exit"] = ot["partial_price"]
+                if hit_be:
+                    ot["stop"] = ot["entry"]
+                    ot["be_moved"] = True
             continue  # no new signal while managing/closing a trade
+
+        regime = None
+        if regime_series is not None:
+            regime = str(regime_series.iloc[i])
+            if regime == "unknown":
+                continue  # no valid OI history -> never trade
+            if enabled_regimes is not None and regime not in enabled_regimes:
+                continue  # regime disabled -> stand aside (also skips strategy compute)
 
         w_start = 0 if max_window is None else max(0, i - max_window + 1)
         window = df.iloc[w_start: i + 1]  # only past + current bar -> no lookahead
         sigs = [s.analyze(window) for s in strategies.values()]
-        agg = aggregate(sigs, threshold, min_agree, margin)
-        if agg.recommendation not in ("long", "short"):
+
+        if regime_series is not None:
+            rules = rules_map.get(regime, rules_map["chop"])
+            rec, agreed = aggregate_regime(sigs, regime, threshold)
+            rr_t = rules["rr"]
+            partial = rules["partial"]
+            be_r = rules["breakeven_r"]
+            htf_on = rules["htf"]
+        else:
+            regime = None
+            agg = aggregate(sigs, threshold, min_agree, margin)
+            rec = agg.recommendation
+            rr_t, partial, be_r, htf_on = rr, None, None, True
+            if rec == "long":
+                agreed = [s.strategy for s in sigs if s.buy_confidence >= threshold]
+            elif rec == "short":
+                agreed = [s.strategy for s in sigs if s.sell_confidence >= threshold]
+            else:
+                agreed = []
+
+        if rec not in ("long", "short"):
             continue
         a = float(atr_series.iloc[i])
         if pd.isna(a) or a <= 0:
@@ -76,24 +166,28 @@ def run_backtest(df, strategies, *, threshold, min_agree, margin, rr,
         bar_date = index[i].date()
         if one_per_day and bar_date == last_entry_date:
             continue  # already entered a trade today
-        last_entry_date = bar_date
         entry = float(closes[i])
-        if htf_period is not None:
+        if htf_period is not None and htf_on:
             h = float(htf_ema.iloc[i])
-            if agg.recommendation == "long" and not (entry > h):
+            if rec == "long" and not (entry > h):
                 continue
-            if agg.recommendation == "short" and not (entry < h):
+            if rec == "short" and not (entry < h):
                 continue
+        last_entry_date = bar_date
         stop_dist = atr_mult * a
-        if agg.recommendation == "long":
-            stop, tp = entry - stop_dist, entry + rr * stop_dist
-            agreed = [s.strategy for s in sigs if s.buy_confidence >= threshold]
-        else:
-            stop, tp = entry + stop_dist, entry - rr * stop_dist
-            agreed = [s.strategy for s in sigs if s.sell_confidence >= threshold]
+        sign = 1.0 if rec == "long" else -1.0
+        stop = entry - sign * stop_dist
+        tp = entry + sign * rr_t * stop_dist
+        partial_price = entry + sign * partial[1] * stop_dist if partial else None
+        be_price = entry + sign * be_r * stop_dist if be_r else None
         open_trade = {
-            "entry_time": str(index[i]), "side": agg.recommendation,
-            "entry": entry, "stop": stop, "tp": tp,
+            "entry_time": str(index[i]), "side": rec,
+            "entry": entry, "stop": stop, "tp": tp, "rr": rr_t,
+            "regime": regime, "stop_dist": stop_dist,
+            "partial_price": partial_price, "partial_frac": partial[0] if partial else 0.0,
+            "partial_level_r": partial[1] if partial else 0.0,
+            "scaled": False, "partial_exit": None,
+            "be_price": be_price, "be_moved": False,
             "outcome": None, "exit_time": None, "exit_price": None,
             "bars_held": 0, "gross_r": 0.0, "cost_r": 0.0, "r_multiple": 0.0,
             "strategies_agreed": agreed,

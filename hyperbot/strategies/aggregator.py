@@ -38,3 +38,47 @@ def aggregate(signals, threshold: float = 50.0, min_agree: int = 3, margin: floa
         f"avg_buy={avg_buy:.1f} avg_sell={avg_sell:.1f} -> {rec}"
     )
     return AggregatedSignal(rec, round(avg_buy, 4), round(avg_sell, 4), agree_buy, agree_sell, regime, reason, list(signals))
+
+
+# Strategy role groups for OI-regime-aware voting.
+TREND_STRATS = ("ema_trend", "macd_momentum", "bb_squeeze")
+MR_STRATS = ("rsi_meanrev", "fvg")
+# Weak-expansion requires the agreeing set to include at least one of these.
+CORE_TREND = ("ema_trend", "macd_momentum")
+
+
+def aggregate_regime(signals, regime: str, threshold: float = 50.0):
+    """OI-regime-aware aggregation. Returns (recommendation, agreed_names).
+
+    recommendation is "long" | "short" | "stand_aside". Voting is purely
+    agreement-count based per regime (the count IS the gate); direction is the
+    side that meets the regime's required count. Long is checked before short.
+
+      high_fuel      : all 5 agree                          (min_agree=5)
+      weak_expansion : >=4 of 5 agree, incl. EMA or MACD    (min_agree=4, conditional)
+      chop           : all 5 agree                          (min_agree=5)
+      profit_taking  : all 5 agree                          (min_agree=5)
+      bleeding       : both MR strats agree                 (min_agree=2, MR only)
+    """
+    buys = {s.strategy for s in signals if s.buy_confidence >= threshold}
+    sells = {s.strategy for s in signals if s.sell_confidence >= threshold}
+    mr, core = set(MR_STRATS), set(CORE_TREND)
+
+    def pick(buy_set, sell_set):
+        if buy_set is not None:
+            return "long", sorted(buy_set)
+        if sell_set is not None:
+            return "short", sorted(sell_set)
+        return "stand_aside", []
+
+    if regime == "weak_expansion":
+        b_ok = len(buys) >= 4 and bool(core & buys)
+        s_ok = len(sells) >= 4 and bool(core & sells)
+        return pick(buys if b_ok else None, sells if s_ok else None)
+
+    if regime == "bleeding":
+        b, s = mr & buys, mr & sells
+        return pick(b if len(b) >= 2 else None, s if len(s) >= 2 else None)
+
+    # high_fuel, chop, profit_taking, and any unknown regime -> strict unanimous 5/5.
+    return pick(buys if len(buys) >= 5 else None, sells if len(sells) >= 5 else None)

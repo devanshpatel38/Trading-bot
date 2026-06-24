@@ -42,3 +42,16 @@ backtest:
   htf_period: 800
   fee: 0.00045      # Hyperliquid taker 0.045%
   slippage: 0.0002  # 2 bps
+oi_filter:
+  # OI-regime overlay (validated 2026-06): only take the unanimous 5/5 signal when the
+  # 30-day smoothed open-interest delta is FLAT (chop, +/-2%); stand aside otherwise.
+  # Manage with a 50% scale-out at 2R + stop-to-breakeven, runner to 3R. EMA800 filter on.
+  enabled: true
+  source: BTCUSDT       # Binance USDT-M perp for open interest
+  window_hours: 720     # 30-day delta lookback
+  avg_hours: 24         # smooth both endpoints over 24h (kills reference-spike noise)
+  trade_regime: chop    # only enter in flat-OI chop
+  partial_frac: 0.5     # take 50% off at the partial level
+  partial_r: 2.0        # partial + breakeven trigger at 2R
+  breakeven_r: 2.0      # move stop to entry at 2R
+  recent_days: 50       # live OI fetch window

@@ -8,10 +8,29 @@ import requests
 
 from .config import Config
 from .data_client import HyperliquidDataClient
+from .oi_data import fetch_recent_oi_hourly, regime_series
 from .strategies import REGISTRY
 from .strategies.base import atr, ema
-from .strategies.aggregator import aggregate
+from .strategies.aggregator import aggregate, aggregate_regime
 from .backtest import run_backtest
+
+REGIMES = ("high_fuel", "weak_expansion", "chop", "profit_taking", "bleeding")
+
+
+def build_regime_rules(cfg) -> dict:
+    """Per-regime management dict for run_backtest, from the oi_filter config.
+    Only the trade_regime gets the scale-out + breakeven treatment; the rest are plain
+    (they are disabled via enabled_regimes anyway)."""
+    oi, bc = cfg.oi_filter, cfg.backtest
+    plain = {"rr": bc.rr, "partial": None, "breakeven_r": None, "htf": True}
+    rules = {k: plain for k in REGIMES}
+    rules[oi.trade_regime] = {
+        "rr": bc.rr,
+        "partial": (oi.partial_frac, oi.partial_r),
+        "breakeven_r": oi.breakeven_r,
+        "htf": True,
+    }
+    return rules
 
 STATE_PATH = Path(__file__).parent.parent / "state.json"
 NTFY_BASE = "https://ntfy.sh"
@@ -52,37 +71,53 @@ def get_current_state(trades: list) -> tuple[str, dict | None, dict | None]:
     return "flat", None, last_resolved
 
 
-def check_new_signal(df, strategies: dict, cfg) -> dict | None:
-    """Check if the last closed bar fires a fresh signal that passed the HTF gate.
-    Returns a trade dict {side, entry, entry_time, stop, tp} or None.
+def check_new_signal(df, strategies: dict, cfg, regime_series=None) -> dict | None:
+    """Check if the last closed bar fires a fresh entry, passing the OI-regime gate,
+    the unanimous 5/5 vote, and the HTF filter. Returns a trade dict or None.
     Called only when run_backtest shows no open trade (avoids double-entry).
+
+    When the OI filter is enabled, the bar's regime must equal the configured
+    trade_regime (chop) and agreement uses aggregate_regime; otherwise it falls back to
+    the plain agreement aggregator.
     """
-    bc = cfg.backtest
+    bc, oi_cfg = cfg.backtest, cfg.oi_filter
+    thr = cfg.aggregator.threshold
     sigs = [s.analyze(df) for s in strategies.values()]
-    agg = aggregate(sigs, cfg.aggregator.threshold, cfg.aggregator.min_agree, cfg.aggregator.margin)
-    if agg.recommendation not in ("long", "short"):
+
+    regime = None
+    if oi_cfg.enabled and regime_series is not None:
+        regime = str(regime_series.iloc[-1])
+        if regime != oi_cfg.trade_regime:
+            return None
+        rec, _ = aggregate_regime(sigs, regime, thr)
+    else:
+        rec = aggregate(sigs, thr, cfg.aggregator.min_agree, cfg.aggregator.margin).recommendation
+    if rec not in ("long", "short"):
         return None
+
     close = float(df["close"].iloc[-1])
     htf_val = float(ema(df["close"], bc.htf_period).iloc[-1])
     atr_val = float(atr(df, bc.atr_period).iloc[-1])
-    if agg.recommendation == "long" and close <= htf_val:
+    if rec == "long" and close <= htf_val:
         return None
-    if agg.recommendation == "short" and close >= htf_val:
+    if rec == "short" and close >= htf_val:
         return None
+    sign = 1.0 if rec == "long" else -1.0
     stop_dist = bc.atr_mult * atr_val
-    if agg.recommendation == "long":
-        stop = close - stop_dist
-        tp = close + bc.rr * stop_dist
-    else:
-        stop = close + stop_dist
-        tp = close - bc.rr * stop_dist
-    return {
-        "side": agg.recommendation,
+    stop = close - sign * stop_dist
+    tp = close + sign * bc.rr * stop_dist
+    trade = {
+        "side": rec,
         "entry": round(close, 2),
         "entry_time": str(df.index[-1]),
         "stop": round(stop, 2),
         "tp": round(tp, 2),
+        "regime": regime,
     }
+    if oi_cfg.enabled and oi_cfg.partial_frac:
+        trade["partial"] = round(close + sign * oi_cfg.partial_r * stop_dist, 2)
+        trade["partial_frac"] = oi_cfg.partial_frac
+    return trade
 
 
 def notify(prev_state: dict, trades: list, new_signal_trade: dict | None,
@@ -102,8 +137,12 @@ def notify(prev_state: dict, trades: list, new_signal_trade: dict | None,
             t = new_signal_trade
             side = t["side"].upper()
             emoji = "[LONG]" if t["side"] == "long" else "[SHORT]"
-            title = f"BTC {side} Signal"
+            tag = f" ({t['regime']})" if t.get("regime") else ""
+            title = f"BTC {side} Signal{tag}"
             body = f"{emoji} entry {t['entry']:.2f} | SL {t['stop']:.2f} | TP {t['tp']:.2f}"
+            if t.get("partial"):
+                pct = int(round(t.get("partial_frac", 0.5) * 100))
+                body += f" | take {pct}% @ {t['partial']:.2f} (2R)->BE"
             send_ntfy(title, body, topic, priority="high")
             print(f"[notifier] Sent: {title} - {body}")
 
@@ -159,6 +198,17 @@ def main() -> None:
         if scfg.enabled
     }
     bc = cfg.backtest
+    oi_cfg = cfg.oi_filter
+
+    reg = None
+    extra = {}
+    if oi_cfg.enabled:
+        oi = fetch_recent_oi_hourly(oi_cfg.source, days=oi_cfg.recent_days)
+        reg = regime_series(df.index, oi, window=oi_cfg.window_hours, avg_hours=oi_cfg.avg_hours)
+        extra = dict(regime_series=reg, regime_rules=build_regime_rules(cfg),
+                     enabled_regimes={oi_cfg.trade_regime})
+        print(f"[notifier] OI filter on — latest regime: {reg.iloc[-1]}")
+
     trades = run_backtest(
         df, strategies,
         threshold=cfg.aggregator.threshold,
@@ -166,13 +216,13 @@ def main() -> None:
         margin=cfg.aggregator.margin,
         rr=bc.rr, atr_period=bc.atr_period, atr_mult=bc.atr_mult,
         warmup=bc.warmup_bars, fee=bc.fee, slippage=bc.slippage,
-        max_window=600, htf_period=bc.htf_period,
+        max_window=600, htf_period=bc.htf_period, **extra,
     )
 
     curr_state_raw, _, _ = get_current_state(trades)
     new_signal_trade = None
     if curr_state_raw == "flat":
-        new_signal_trade = check_new_signal(df, strategies, cfg)
+        new_signal_trade = check_new_signal(df, strategies, cfg, reg)
 
     new_state = notify(prev, trades, new_signal_trade, topic)
     save_state(new_state)
