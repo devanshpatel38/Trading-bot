@@ -1,10 +1,4 @@
 {
-  "state": "open",
-  "trade": {
-    "side": "short",
-    "entry": 58234.0,
-    "entry_time": "2026-06-25 13:00:00",
-    "stop": 59966.71,
-    "tp": 53035.86
-  }
+  "state": "flat",
+  "trade": null
 }
