@@ -43,15 +43,18 @@ backtest:
   fee: 0.00045      # Hyperliquid taker 0.045%
   slippage: 0.0002  # 2 bps
 oi_filter:
-  # OI-regime overlay (validated 2026-06): only take the unanimous 5/5 signal when the
+  # OI-regime overlay (LOCKED 2026-06-25): take the unanimous 5/5 signal only when the
   # 30-day smoothed open-interest delta is FLAT (chop, +/-2%); stand aside otherwise.
-  # Manage with a 50% scale-out at 2R + stop-to-breakeven, runner to 3R. EMA800 filter on.
+  # Management is PLAIN 1:3 — market entry, 3xATR stop, 3R target, no partial/breakeven
+  # (backtested higher-returning than scale+BE and far simpler to execute: SL+TP rest on
+  # the exchange, nothing to monitor). Signals/execution on the Binance perp feed.
   enabled: true
-  source: BTCUSDT       # Binance USDT-M perp for open interest
+  source: BTCUSDT       # Binance USDT-M perp (candles + open interest)
   window_hours: 720     # 30-day delta lookback
   avg_hours: 24         # smooth both endpoints over 24h (kills reference-spike noise)
   trade_regime: chop    # only enter in flat-OI chop
-  partial_frac: 0.5     # take 50% off at the partial level
-  partial_r: 2.0        # partial + breakeven trigger at 2R
-  breakeven_r: 2.0      # move stop to entry at 2R
+  partial_frac: 0.0     # plain 1:3 -> no partial scale-out
+  partial_r: 0.0
+  breakeven_r: 0.0      # plain 1:3 -> no breakeven move
   recent_days: 50       # live OI fetch window
+  risk_pct: 0.05        # risk per trade as fraction of capital (5%; ~28% max DD. lower to 0.02-0.03 for a gentler ride)

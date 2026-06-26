@@ -43,10 +43,11 @@ class OIFilterConfig:
     window_hours: int = 720          # 30-day delta lookback
     avg_hours: int = 24              # smoothing window on both endpoints
     trade_regime: str = "chop"       # only enter in this regime
-    partial_frac: float = 0.5        # fraction taken at the partial level
-    partial_r: float = 2.0           # R level for the partial + breakeven move
-    breakeven_r: float = 2.0         # move stop to entry once price reaches this R
-    recent_days: int = 50            # live OI fetch window (notifier)
+    partial_frac: float = 0.0        # fraction taken at the partial level (0 = plain 1:3)
+    partial_r: float = 0.0           # R level for the partial
+    breakeven_r: float = 0.0         # move stop to entry at this R (0 = no breakeven)
+    recent_days: int = 50            # live OI fetch window
+    risk_pct: float = 0.05           # risk per trade as a fraction of capital
 
 
 @dataclass
