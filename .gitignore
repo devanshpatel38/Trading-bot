@@ -7,3 +7,5 @@ venv/
 backtest_results.json
 *.egg-info/
 data/
+binance_bot_state.json
+bot.log
