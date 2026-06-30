@@ -40,7 +40,7 @@ backtest:
   atr_mult: 3.0
   warmup_bars: 815   # EMA800 needs ~800 bars to seed
   htf_period: 800
-  fee: 0.00045      # Hyperliquid taker 0.045%
+  fee: 0.0005       # Binance USDT-M perp taker 0.05% (VIP0; 0.045% if paying fees in BNB)
   slippage: 0.0002  # 2 bps
 oi_filter:
   # OI-regime overlay (LOCKED 2026-06-25): take the unanimous 5/5 signal only when the
