@@ -12,12 +12,13 @@ from __future__ import annotations
 import argparse
 import json
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pandas as pd
 
 from .config import Config
-from .binance_data import fetch_klines, _rows_to_df
+from .binance_data import fetch_klines, _rows_to_df, INTERVAL_MS
 from .oi_data import fetch_recent_oi_hourly, regime_series
 from .strategies import REGISTRY
 from .strategies.base import atr, ema
@@ -25,6 +26,20 @@ from .strategies.aggregator import aggregate_regime
 from .binance_exec import BinanceFuturesClient
 
 STATE_PATH = Path(__file__).parent.parent / "binance_bot_state.json"
+
+
+def log(msg: str) -> None:
+    """Print with a UTC timestamp prefix so bot.log is self-documenting per cron run."""
+    stamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%SZ")
+    print(f"{stamp} | {msg}", flush=True)
+
+
+def latest_closed_bar(symbol: str, interval: str) -> str:
+    """Timestamp of the most recent CLOSED candle (drops the still-forming bar)."""
+    end = int(time.time() * 1000)
+    start = end - 6 * INTERVAL_MS[interval]
+    df = _rows_to_df(fetch_klines(symbol, interval, start, end, futures=True)).iloc[:-1]
+    return str(df.index[-1]) if len(df) else "?"
 
 
 def load_state() -> dict:
@@ -57,7 +72,7 @@ def evaluate_signal(cfg) -> dict | None:
 
     strategies = {n: REGISTRY[n](s.params) for n, s in cfg.strategies.items() if s.enabled}
     sigs = [s.analyze(df) for s in strategies.values()]
-    rec, _ = aggregate_regime(sigs, regime, cfg.aggregator.threshold)
+    rec, _ = aggregate_regime(sigs, regime, cfg.aggregator.threshold, oi_cfg.chop_min_agree)
     if rec not in ("long", "short"):
         return {"signal": None, "regime": regime, "bar": bar}
 
@@ -79,49 +94,54 @@ def run_once(testnet: bool = True, dry: bool = False) -> None:
     oi_cfg = cfg.oi_filter
     client = BinanceFuturesClient(oi_cfg.source, testnet=testnet)
 
+    # Stamp every run with the last CLOSED candle we read, so bot.log shows the bar
+    # each cron invocation acted on (and confirms firing is in sync with candle close).
+    bar = latest_closed_bar(oi_cfg.source, cfg.interval)
+    log(f"run [{'demo' if testnet else 'MAINNET'}] {oi_cfg.source} {cfg.interval} | last closed bar: {bar}")
+
     pos = client.position()
     if pos is not None:
-        print(f"[bot] in position: {pos['side']} {abs(pos['qty'])} @ {pos['entry']:.1f} "
-              f"(mark {pos['mark']:.1f}, uPnL {pos['unreal']:+.2f}) — SL/TP resting, nothing to do")
+        log(f"in position: {pos['side']} {abs(pos['qty'])} @ {pos['entry']:.1f} "
+            f"(mark {pos['mark']:.1f}, uPnL {pos['unreal']:+.2f}) — SL/TP resting, nothing to do")
         return
 
     # flat: clear any leftover bracket from a just-closed trade
     leftovers = client.open_algo_orders()
     if leftovers:
-        print(f"[bot] flat with {len(leftovers)} leftover bracket order(s) -> cancelling")
+        log(f"flat with {len(leftovers)} leftover bracket order(s) -> cancelling")
         if not dry:
             client.cancel_all()
 
     plan = evaluate_signal(cfg)
     if not plan or plan.get("signal") is None:
         why = plan.get("blocked") or ("regime " + plan.get("regime", "?")) if plan else "?"
-        print(f"[bot] stand aside (bar {plan.get('bar') if plan else '?'} | no chop 5/5 | {why})")
+        log(f"stand aside (bar {plan.get('bar') if plan else '?'} | no chop {oi_cfg.chop_min_agree}/5 | {why})")
         return
 
-    state = load_state()
-    if state.get("last_entry_bar") == plan["bar"]:
-        print(f"[bot] signal {plan['signal']} but already acted on bar {plan['bar']} — skip")
+    if load_state().get("last_entry_bar") == plan["bar"]:
+        log(f"signal {plan['signal']} but already acted on bar {plan['bar']} — skip")
         return
 
     bal = client.available_usdt()
     qty = client.round_qty(oi_cfg.risk_pct * bal / plan["stop_dist"])
     side = "BUY" if plan["signal"] == "long" else "SELL"
     close_side = "SELL" if plan["signal"] == "long" else "BUY"
-    print(f"[bot] SIGNAL {plan['signal'].upper()} bar {plan['bar']} | ref {plan['ref_price']:.1f} "
-          f"qty {qty} (risk ${oi_cfg.risk_pct*bal:.0f}) | SL {client.round_price(plan['stop']):.1f} "
-          f"TP {client.round_price(plan['tp']):.1f}")
+    log(f"SIGNAL {plan['signal'].upper()} bar {plan['bar']} | ref {plan['ref_price']:.1f} "
+        f"qty {qty} (risk ${oi_cfg.risk_pct*bal:.0f}) | SL {client.round_price(plan['stop']):.1f} "
+        f"TP {client.round_price(plan['tp']):.1f}")
     if dry:
-        print("[bot] DRY RUN — no orders placed")
+        log("DRY RUN — no orders placed")
         return
 
     o = client.market(side, qty)
-    print(f"[bot] entry {o['status']} id {o['orderId']}")
+    log(f"entry {o['status']} id {o['orderId']}")
     sl = client.stop_market(close_side, plan["stop"], close_position=True)
     tp = client.take_profit(close_side, plan["tp"], close_position=True)
-    print(f"[bot] SL algo {sl.get('algoId')} | TP algo {tp.get('algoId')}")
+    log(f"SL algo {sl.get('algoId')} | TP algo {tp.get('algoId')}")
+    state = load_state()
     state["last_entry_bar"] = plan["bar"]
     save_state(state)
-    print("[bot] live (demo). SL + TP resting; exchange will close the position.")
+    log("live. SL + TP resting; exchange will close the position.")
 
 
 def main():
@@ -134,7 +154,7 @@ def main():
         try:
             run_once(testnet=not args.mainnet, dry=args.dry)
         except Exception as exc:  # keep the loop alive on transient errors
-            print(f"[bot] error: {exc}")
+            log(f"error: {exc}")
         if args.loop <= 0:
             break
         time.sleep(args.loop)

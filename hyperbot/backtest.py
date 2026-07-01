@@ -69,7 +69,8 @@ def _close_trade(ot, exit_price, i, index, fee, slippage):
 def run_backtest(df, strategies, *, threshold, min_agree, margin, rr,
                  atr_period=14, atr_mult=1.5, warmup=215, fee=0.0, slippage=0.0,
                  one_per_day=False, max_window=None, htf_period=None,
-                 regime_series=None, regime_rules=None, enabled_regimes=None):
+                 regime_series=None, regime_rules=None, enabled_regimes=None,
+                 chop_min_agree=5):
     """Walk bars one at a time (no lookahead); one trade at a time.
 
     one_per_day: if True, take at most one entry per calendar day.
@@ -141,7 +142,7 @@ def run_backtest(df, strategies, *, threshold, min_agree, margin, rr,
 
         if regime_series is not None:
             rules = rules_map.get(regime, rules_map["chop"])
-            rec, agreed = aggregate_regime(sigs, regime, threshold)
+            rec, agreed = aggregate_regime(sigs, regime, threshold, chop_min_agree)
             rr_t = rules["rr"]
             partial = rules["partial"]
             be_r = rules["breakeven_r"]

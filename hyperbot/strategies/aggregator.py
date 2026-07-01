@@ -47,7 +47,7 @@ MR_STRATS = ("rsi_meanrev", "fvg")
 CORE_TREND = ("ema_trend", "macd_momentum")
 
 
-def aggregate_regime(signals, regime: str, threshold: float = 50.0):
+def aggregate_regime(signals, regime: str, threshold: float = 50.0, chop_min_agree: int = 5):
     """OI-regime-aware aggregation. Returns (recommendation, agreed_names).
 
     recommendation is "long" | "short" | "stand_aside". Voting is purely
@@ -56,7 +56,7 @@ def aggregate_regime(signals, regime: str, threshold: float = 50.0):
 
       high_fuel      : all 5 agree                          (min_agree=5)
       weak_expansion : >=4 of 5 agree, incl. EMA or MACD    (min_agree=4, conditional)
-      chop           : all 5 agree                          (min_agree=5)
+      chop           : `chop_min_agree` agree               (5=unanimous, 4=relaxed 4/5)
       profit_taking  : all 5 agree                          (min_agree=5)
       bleeding       : both MR strats agree                 (min_agree=2, MR only)
     """
@@ -80,5 +80,9 @@ def aggregate_regime(signals, regime: str, threshold: float = 50.0):
         b, s = mr & buys, mr & sells
         return pick(b if len(b) >= 2 else None, s if len(s) >= 2 else None)
 
-    # high_fuel, chop, profit_taking, and any unknown regime -> strict unanimous 5/5.
+    if regime == "chop":
+        need = chop_min_agree
+        return pick(buys if len(buys) >= need else None, sells if len(sells) >= need else None)
+
+    # high_fuel, profit_taking, and any unknown regime -> strict unanimous 5/5.
     return pick(buys if len(buys) >= 5 else None, sells if len(sells) >= 5 else None)

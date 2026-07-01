@@ -110,6 +110,18 @@ def test_chop_and_profit_taking_need_unanimous():
         assert aggregate_regime(all_sigs(buy_names=five[:4]), regime)[0] == "stand_aside"
 
 
+def test_chop_min_agree_relaxed():
+    four = ("ema_trend", "macd_momentum", "bb_squeeze", "rsi_meanrev")
+    # default (5/5) -> 4 agreeing stands aside
+    assert aggregate_regime(all_sigs(buy_names=four), "chop")[0] == "stand_aside"
+    # relaxed to 4/5 -> enters, and reports exactly the 4 that agreed
+    rec, agreed = aggregate_regime(all_sigs(buy_names=four), "chop", chop_min_agree=4)
+    assert rec == "long"
+    assert set(agreed) == set(four)
+    # relaxing chop must NOT relax profit_taking (still strict 5/5)
+    assert aggregate_regime(all_sigs(buy_names=four), "profit_taking", chop_min_agree=4)[0] == "stand_aside"
+
+
 def test_bleeding_needs_both_mr():
     rec, agreed = aggregate_regime(all_sigs(sell_names=("rsi_meanrev", "fvg")), "bleeding")
     assert rec == "short"

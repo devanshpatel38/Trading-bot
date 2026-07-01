@@ -21,5 +21,6 @@ def test_config_loads_defaults():
     assert cfg.backtest.atr_period == 14
     assert cfg.backtest.atr_mult == 3.0
     assert cfg.backtest.htf_period == 800
-    assert cfg.backtest.fee == 0.00045
+    assert cfg.backtest.fee == 0.0005   # Binance USDT-M taker 0.05%
     assert cfg.backtest.slippage == 0.0002
+    assert cfg.oi_filter.chop_min_agree == 4
