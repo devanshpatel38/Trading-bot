@@ -24,3 +24,5 @@ def test_config_loads_defaults():
     assert cfg.backtest.fee == 0.0005   # Binance USDT-M taker 0.05%
     assert cfg.backtest.slippage == 0.0002
     assert cfg.oi_filter.chop_min_agree == 4
+    assert cfg.oi_filter.risk_pct == 0.05
+    assert cfg.oi_filter.risk_floor == 250

@@ -146,12 +146,13 @@ def run_once(testnet: bool = True, dry: bool = False) -> None:
         return
 
     bal = client.available_usdt()
-    qty = client.round_qty(oi_cfg.risk_pct * bal / plan["stop_dist"])
+    risk_usd = max(oi_cfg.risk_floor, oi_cfg.risk_pct * bal)   # floor: never risk less than risk_floor
+    qty = client.round_qty(risk_usd / plan["stop_dist"])
     side = "BUY" if plan["signal"] == "long" else "SELL"
     close_side = "SELL" if plan["signal"] == "long" else "BUY"
     log(f"SIGNAL {plan['signal'].upper()} bar {plan['bar']} | ref {plan['ref_price']:.1f} "
-        f"qty {qty} (risk ${oi_cfg.risk_pct*bal:.0f}) | SL {client.round_price(plan['stop']):.1f} "
-        f"TP {client.round_price(plan['tp']):.1f}")
+        f"qty {qty} (risk ${risk_usd:.0f} = max(${oi_cfg.risk_floor:.0f}, {oi_cfg.risk_pct*100:.0f}%x${bal:.0f})) | "
+        f"SL {client.round_price(plan['stop']):.1f} TP {client.round_price(plan['tp']):.1f}")
     if dry:
         log("DRY RUN — no orders placed")
         return

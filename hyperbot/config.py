@@ -49,6 +49,7 @@ class OIFilterConfig:
     breakeven_r: float = 0.0         # move stop to entry at this R (0 = no breakeven)
     recent_days: int = 50            # live OI fetch window
     risk_pct: float = 0.05           # risk per trade as a fraction of capital
+    risk_floor: float = 0.0          # min $ risk per trade: risk = max(risk_floor, risk_pct*capital)
 
 
 @dataclass

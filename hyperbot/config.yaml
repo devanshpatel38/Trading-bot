@@ -60,3 +60,4 @@ oi_filter:
   breakeven_r: 0.0      # plain 1:3 -> no breakeven move
   recent_days: 50       # live OI fetch window
   risk_pct: 0.05        # risk per trade as fraction of capital (5%; ~28% max DD. lower to 0.02-0.03 for a gentler ride)
+  risk_floor: 250       # min $ risk/trade: risk = max(250, 5%*capital). $250 = 5% of the $5000 base; floors risk when capital < $5000
