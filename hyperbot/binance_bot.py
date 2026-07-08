@@ -19,7 +19,7 @@ import pandas as pd
 
 from .config import Config
 from .binance_data import fetch_klines, _rows_to_df, INTERVAL_MS
-from .oi_data import fetch_recent_oi_hourly, regime_series
+from .oi_data import fetch_recent_oi_hourly, fetch_live_oi_hourly, regime_series
 from .strategies import REGISTRY
 from .strategies.base import atr, ema
 from .strategies.aggregator import aggregate_regime
@@ -59,14 +59,37 @@ def recent_perp(symbol: str, interval: str, days: int) -> pd.DataFrame:
     return _rows_to_df(fetch_klines(symbol, interval, start, end, futures=True))
 
 
+OI_API_ATTEMPTS = 5      # retries for the live OI endpoint within a single run
+
+
+def hybrid_oi(oi_cfg) -> pd.DataFrame | None:
+    """Real-time OI feed: Vision archive for the deep 30-day reference + the live endpoint
+    (retried up to OI_API_ATTEMPTS) for the fresh trailing window. Returns the merged
+    hourly OI, or None if the live API can't be reached — in which case the caller MUST
+    stand aside (never trade on stale OI)."""
+    archive = fetch_recent_oi_hourly(oi_cfg.source, days=oi_cfg.recent_days)
+    for attempt in range(1, OI_API_ATTEMPTS + 1):
+        try:
+            live = fetch_live_oi_hourly(oi_cfg.source, days=20)
+            return live["oi"].combine_first(archive["oi"]).sort_index().to_frame("oi")
+        except Exception as exc:
+            log(f"OI API attempt {attempt}/{OI_API_ATTEMPTS} failed: {exc}")
+            if attempt < OI_API_ATTEMPTS:
+                time.sleep(3)
+    log(f"OI API failed after {OI_API_ATTEMPTS} attempts — standing aside this run (no stale-OI trading)")
+    return None
+
+
 def evaluate_signal(cfg) -> dict | None:
     """Chop signal on the latest CLOSED perp bar. Returns a trade plan or None."""
     oi_cfg, bc = cfg.oi_filter, cfg.backtest
     df = recent_perp(oi_cfg.source, cfg.interval, days=75).iloc[:-1]  # drop forming bar
-    oi = fetch_recent_oi_hourly(oi_cfg.source, days=oi_cfg.recent_days)
+    bar = str(df.index[-1])
+    oi = hybrid_oi(oi_cfg)
+    if oi is None:
+        return {"signal": None, "regime": "oi_api_down", "bar": bar, "blocked": "oi_api_down"}
     reg = regime_series(df.index, oi, window=oi_cfg.window_hours, avg_hours=oi_cfg.avg_hours)
     regime = str(reg.iloc[-1])
-    bar = str(df.index[-1])
     if regime != oi_cfg.trade_regime:
         return {"signal": None, "regime": regime, "bar": bar}
 

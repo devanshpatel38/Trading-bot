@@ -13,6 +13,9 @@ import requests
 # This is the only public source with >30 days of OI history (the live
 # /futures/data/openInterestHist endpoint retains only ~30 days).
 VISION_URL = "https://data.binance.vision/data/futures/um/daily/metrics/{symbol}/{symbol}-metrics-{date}.zip"
+# Live OI endpoint: real-time (~min-fresh) but retains only ~30 days. Used live for the
+# fresh trailing window; the Vision archive still supplies the 30-day-ago reference.
+LIVE_OI_URL = "https://fapi.binance.com/futures/data/openInterestHist"
 CACHE_DIR = "data/binance"
 
 # 30-day OI delta on an hourly grid = 720 bars.
@@ -134,6 +137,45 @@ def regime_series(candle_index: pd.DatetimeIndex, oi_hourly: pd.DataFrame,
     """Regime label per candle bar (str Series aligned to candle_index)."""
     delta = oi_delta_on_index(candle_index, oi_hourly, window, avg_hours)
     return delta.map(classify_regime)
+
+
+def fetch_live_oi_hourly(symbol: str = "BTCUSDT", days: int = 20, session=None) -> pd.DataFrame:
+    """Real-time hourly OI from the live endpoint, sampled to MATCH the Vision archive.
+
+    Pulls `period=5m` and resamples to hourly via last-value-in-hour — the exact same
+    construction as `load_oi_hourly`/`fetch_recent_oi_hourly` (validated to agree with the
+    archive to <1 OI unit; the raw `period=1h` endpoint samples differently and drifts
+    ~0.3%). The endpoint retains only ~30 days, so `days` <= ~28. Real-time (~minutes
+    fresh) vs the archive's ~1-day publication lag. Raises on any HTTP/network error so
+    the caller can retry; the live bot must NOT trade on stale OI.
+    """
+    get = (session or requests).get
+    end = int(time.time() * 1000)
+    start = end - days * 86_400_000
+    span = 500 * 300_000  # 500 x 5-min points per call
+    rows: dict[int, float] = {}
+    cursor = start
+    while cursor < end:
+        resp = get(LIVE_OI_URL, params={"symbol": symbol, "period": "5m",
+                                        "startTime": cursor, "endTime": min(cursor + span, end),
+                                        "limit": 500}, timeout=30)
+        if resp.status_code != 200:
+            raise RuntimeError(f"openInterestHist {resp.status_code}: {resp.text[:200]}")
+        batch = resp.json()
+        if not batch:
+            break
+        for x in batch:
+            rows[int(x["timestamp"])] = float(x["sumOpenInterest"])
+        nxt = int(batch[-1]["timestamp"]) + 300_000
+        if nxt <= cursor:
+            break
+        cursor = nxt
+        time.sleep(0.1)
+    if not rows:
+        raise RuntimeError(f"No live OI returned for {symbol}")
+    s = pd.Series(rows)
+    s.index = pd.to_datetime(s.index.astype("int64"), unit="ms")
+    return s.sort_index().resample("1h").last().to_frame("oi")
 
 
 def fetch_recent_oi_hourly(symbol: str = "BTCUSDT", days: int = 50) -> pd.DataFrame:
