@@ -1,4 +1,46 @@
 {
-  "state": "flat",
-  "trade": null
+  "state": "open",
+  "trade": {
+    "entry_time": "2026-07-10 02:00:00",
+    "side": "long",
+    "entry": 63958.0,
+    "stop": 62726.07142857143,
+    "tp": 67653.78571428571,
+    "outcome": "open",
+    "exit_time": null,
+    "exit_price": null,
+    "bars_held": 3,
+    "gross_r": 0.0,
+    "cost_r": 0.0,
+    "r_multiple": 0.0,
+    "strategies_agreed": [
+      "ema_trend",
+      "rsi_meanrev",
+      "bb_squeeze",
+      "fvg",
+      "macd_momentum"
+    ],
+    "confidences": {
+      "ema_trend": {
+        "buy": 75.0,
+        "sell": 0.0
+      },
+      "rsi_meanrev": {
+        "buy": 50.0,
+        "sell": 25.0
+      },
+      "bb_squeeze": {
+        "buy": 84.6839285865755,
+        "sell": 34.683928586575504
+      },
+      "fvg": {
+        "buy": 65.0,
+        "sell": 0.0
+      },
+      "macd_momentum": {
+        "buy": 75.0,
+        "sell": 0.0
+      }
+    }
+  }
 }
