@@ -55,6 +55,8 @@ oi_filter:
   avg_hours: 24         # smooth both endpoints over 24h (kills reference-spike noise)
   trade_regime: chop    # only enter in flat-OI chop
   chop_min_agree: 4     # chop entry needs 4-of-5 agreement (was 5/5)
+  chop_hyst_enter: 1.8  # hysteresis dead-band on the +/-2% chop edge: ENTER chop when |OI delta| < 1.8%
+  chop_hyst_exit: 2.2   # ...EXIT chop only when |OI delta| > 2.2% (holds state between; absorbs OI noise)
   partial_frac: 0.0     # plain 1:3 -> no partial scale-out
   partial_r: 0.0
   breakeven_r: 0.0      # plain 1:3 -> no breakeven move

@@ -44,6 +44,8 @@ class OIFilterConfig:
     avg_hours: int = 24              # smoothing window on both endpoints
     trade_regime: str = "chop"       # only enter in this regime
     chop_min_agree: int = 5          # agreement to enter in chop (5=unanimous, 4=relaxed 4/5)
+    chop_hyst_enter: float = 0.0     # hysteresis: enter chop when |OI delta| < this (0 = hard boundary)
+    chop_hyst_exit: float = 0.0      # hysteresis: exit chop when |OI delta| > this (0 = hard boundary)
     partial_frac: float = 0.0        # fraction taken at the partial level (0 = plain 1:3)
     partial_r: float = 0.0           # R level for the partial
     breakeven_r: float = 0.0         # move stop to entry at this R (0 = no breakeven)

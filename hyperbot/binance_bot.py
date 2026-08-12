@@ -88,7 +88,8 @@ def evaluate_signal(cfg) -> dict | None:
     oi = hybrid_oi(oi_cfg)
     if oi is None:
         return {"signal": None, "regime": "oi_api_down", "bar": bar, "blocked": "oi_api_down"}
-    reg = regime_series(df.index, oi, window=oi_cfg.window_hours, avg_hours=oi_cfg.avg_hours)
+    reg = regime_series(df.index, oi, window=oi_cfg.window_hours, avg_hours=oi_cfg.avg_hours,
+                        chop_enter=oi_cfg.chop_hyst_enter, chop_exit=oi_cfg.chop_hyst_exit)
     regime = str(reg.iloc[-1])
     if regime != oi_cfg.trade_regime:
         return {"signal": None, "regime": regime, "bar": bar}

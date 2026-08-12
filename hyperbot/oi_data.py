@@ -133,10 +133,48 @@ def oi_delta_on_index(candle_index: pd.DatetimeIndex, oi_hourly: pd.DataFrame,
 
 
 def regime_series(candle_index: pd.DatetimeIndex, oi_hourly: pd.DataFrame,
-                  window: int = OI_WINDOW_HOURS, avg_hours: int | None = 24) -> pd.Series:
-    """Regime label per candle bar (str Series aligned to candle_index)."""
+                  window: int = OI_WINDOW_HOURS, avg_hours: int | None = 24,
+                  chop_enter: float = 0.0, chop_exit: float = 0.0) -> pd.Series:
+    """Regime label per candle bar (str Series aligned to candle_index).
+
+    Default (chop_enter/chop_exit = 0): stateless hard boundaries at +/-WEAK (2%) etc.
+
+    Hysteresis (chop_enter>0 and chop_exit>chop_enter): the chop band gets a sticky
+    dead-band so a bar teetering on the +/-2% line does not flip the regime on tiny OI
+    noise. ENTER chop only when |delta| < chop_enter (e.g. 1.8); EXIT chop only when
+    |delta| > chop_exit (e.g. 2.2); HOLD the current chop state in the grey zone between.
+    This makes the live bot (provisional OI) and the backtest (settled OI) agree far more
+    often near the boundary. Applied symmetrically to BOTH chop edges (+2 and -2). State
+    is path-dependent but converges within any window that contains a recent crossing
+    (always true for the live 75-day window), so live == backtest on the same data.
+    """
     delta = oi_delta_on_index(candle_index, oi_hourly, window, avg_hours)
-    return delta.map(classify_regime)
+    if not (chop_enter > 0 and chop_exit > chop_enter):
+        return delta.map(classify_regime)                       # stateless (backward compatible)
+
+    labels = []
+    in_chop = None                                              # undetermined until first crossing
+    for v in delta.values:
+        if v is None or pd.isna(v):
+            in_chop = None
+            labels.append("unknown")
+            continue
+        base = classify_regime(v)
+        av = abs(v)
+        if av < chop_enter:
+            in_chop = True
+        elif av > chop_exit:
+            in_chop = False
+        # else: grey zone -> hold prior in_chop
+        if in_chop is True:
+            labels.append("chop")
+        elif in_chop is False:
+            # out of chop; if the hard label would still say 'chop' (we're in the grey
+            # zone), report the adjacent expansion regime instead so nothing double-counts
+            labels.append(base if base != "chop" else ("weak_expansion" if v > 0 else "profit_taking"))
+        else:
+            labels.append(base)                                # pre-first-crossing: fall back to hard
+    return pd.Series(labels, index=candle_index)
 
 
 def fetch_live_oi_hourly(symbol: str = "BTCUSDT", days: int = 20, session=None) -> pd.DataFrame:

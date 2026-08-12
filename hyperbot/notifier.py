@@ -204,7 +204,8 @@ def main() -> None:
     extra = {}
     if oi_cfg.enabled:
         oi = fetch_recent_oi_hourly(oi_cfg.source, days=oi_cfg.recent_days)
-        reg = regime_series(df.index, oi, window=oi_cfg.window_hours, avg_hours=oi_cfg.avg_hours)
+        reg = regime_series(df.index, oi, window=oi_cfg.window_hours, avg_hours=oi_cfg.avg_hours,
+                            chop_enter=oi_cfg.chop_hyst_enter, chop_exit=oi_cfg.chop_hyst_exit)
         extra = dict(regime_series=reg, regime_rules=build_regime_rules(cfg),
                      enabled_regimes={oi_cfg.trade_regime})
         print(f"[notifier] OI filter on — latest regime: {reg.iloc[-1]}")

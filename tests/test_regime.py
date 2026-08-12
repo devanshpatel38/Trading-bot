@@ -70,6 +70,29 @@ def test_regime_series_maps_labels():
     assert list(reg) == ["unknown", "chop", "high_fuel", "bleeding"]
 
 
+def test_regime_hysteresis_sticky_chop_band():
+    # deltas ~ [NaN, +1.0%, +2.3%, +1.9%, +1.5%] via window=1 pct-change
+    idx = pd.date_range("2024-01-01", periods=5, freq="1h")
+    oi = pd.DataFrame({"oi": [100.0, 101.0, 103.323, 105.2865, 106.866]}, index=idx)
+    hard = regime_series(idx, oi, window=1, avg_hours=None)                     # hard +/-2 boundary
+    hyst = regime_series(idx, oi, window=1, avg_hours=None, chop_enter=1.8, chop_exit=2.2)
+    # bar1 (+1.0% < enter) enters chop; bar2 (+2.3% > exit) leaves chop
+    assert hyst.iloc[1] == "chop" and hyst.iloc[2] != "chop"
+    # bar3 (+1.9%, grey zone): HARD flips back to chop, HYSTERESIS holds it OUT (needs <1.8 to re-enter)
+    assert hard.iloc[3] == "chop"
+    assert hyst.iloc[3] != "chop"
+    # bar4 (+1.5% < enter) re-enters chop
+    assert hyst.iloc[4] == "chop"
+
+
+def test_regime_hysteresis_off_matches_hard_boundary():
+    # chop_enter/exit = 0 (default) must be identical to the stateless hard classifier
+    idx = pd.date_range("2024-01-01", periods=4, freq="1h")
+    oi = pd.DataFrame({"oi": [100.0, 100.0, 106.0, 90.0]}, index=idx)
+    assert list(regime_series(idx, oi, window=1, avg_hours=None, chop_enter=0.0, chop_exit=0.0)) \
+        == list(regime_series(idx, oi, window=1, avg_hours=None))
+
+
 # --------------------------------------------------------------------------- #
 # Regime-aware voting
 # --------------------------------------------------------------------------- #
