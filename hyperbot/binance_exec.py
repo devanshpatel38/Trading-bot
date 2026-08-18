@@ -48,20 +48,39 @@ class BinanceFuturesClient:
     def _server_time(self) -> int:
         return int(self.session.get(self.base + "/fapi/v1/time", timeout=15).json()["serverTime"])
 
+    # Transient failures worth retrying — but ONLY on idempotent GET calls. A POST that
+    # times out (-1007 "Send status unknown; execution status unknown") may have already
+    # placed the order, so retrying it could double-fill. POSTs therefore never retry:
+    # they raise, the run logs + stands aside, which is the safe failure mode.
+    _TRANSIENT = frozenset({408, 425, 429, 500, 502, 503, 504})
+    _GET_RETRIES = 4
+
     def _request(self, method: str, path: str, params: dict | None = None, signed: bool = False):
-        params = dict(params or {})
-        if signed:
-            params["timestamp"] = self._server_time()
-            params["recvWindow"] = 5000
-            qs = urlencode(params)
-            params_sig = qs + "&signature=" + hmac.new(self.secret.encode(), qs.encode(), hashlib.sha256).hexdigest()
-            url = f"{self.base}{path}?{params_sig}"
-            resp = self.session.request(method, url, timeout=15)
-        else:
-            resp = self.session.request(method, self.base + path, params=params, timeout=15)
-        if resp.status_code != 200:
-            raise BinanceFuturesError(f"{method} {path} -> {resp.status_code}: {resp.text[:300]}")
-        return resp.json()
+        base_params = dict(params or {})
+        retries = self._GET_RETRIES if method.upper() == "GET" else 1     # POST: one shot, never retry
+        last_exc = None
+        for attempt in range(1, retries + 1):
+            try:
+                params = dict(base_params)
+                if signed:
+                    params["timestamp"] = self._server_time()            # fresh timestamp each attempt
+                    params["recvWindow"] = 5000
+                    qs = urlencode(params)
+                    sig = hmac.new(self.secret.encode(), qs.encode(), hashlib.sha256).hexdigest()
+                    resp = self.session.request(method, f"{self.base}{path}?{qs}&signature={sig}", timeout=15)
+                else:
+                    resp = self.session.request(method, self.base + path, params=params, timeout=15)
+                if resp.status_code == 200:
+                    return resp.json()
+                exc = BinanceFuturesError(f"{method} {path} -> {resp.status_code}: {resp.text[:300]}")
+                if attempt < retries and resp.status_code in self._TRANSIENT:
+                    last_exc = exc; time.sleep(attempt); continue        # transient GET -> back off + retry
+                raise exc
+            except (requests.Timeout, requests.ConnectionError) as e:
+                if attempt < retries:
+                    last_exc = e; time.sleep(attempt); continue
+                raise
+        raise last_exc                                                   # exhausted GET retries
 
     def _load_filters(self):
         ex = self.session.get(self.base + "/fapi/v1/exchangeInfo", timeout=15).json()
