@@ -44,8 +44,10 @@ def latest_closed_bar(symbol: str, interval: str) -> str:
 
 def load_state() -> dict:
     if STATE_PATH.exists():
-        return json.loads(STATE_PATH.read_text())
-    return {"last_entry_bar": None}
+        s = json.loads(STATE_PATH.read_text())
+        s.setdefault("in_position", False)   # tracks whether the previous run held a position
+        return s
+    return {"last_entry_bar": None, "in_position": False}
 
 
 def save_state(s: dict) -> None:
@@ -134,17 +136,34 @@ def run_once(testnet: bool = True, dry: bool = False) -> None:
     log(f"run [{'demo' if testnet else 'MAINNET'}] {oi_cfg.source} {cfg.interval} | last closed bar: {bar} | {oi_mode}")
 
     pos = client.position()
+    state = load_state()
     if pos is not None:
         log(f"in position: {pos['side']} {abs(pos['qty'])} @ {pos['entry']:.1f} "
             f"(mark {pos['mark']:.1f}, uPnL {pos['unreal']:+.2f}) — SL/TP resting, nothing to do")
+        if not state.get("in_position"):
+            state["in_position"] = True
+            save_state(state)
         return
 
-    # flat: clear any leftover bracket from a just-closed trade
+    # flat now. If the previous run held a position, the trade closed since then — i.e. on
+    # the candle this run is evaluating. The backtest engine never opens a new trade on the
+    # bar it closed one (it closes, then `continue`s), so for parity we skip re-entry this
+    # candle. The next candle can enter normally.
+    just_closed = state.get("in_position", False)
+    if just_closed:
+        state["in_position"] = False
+        save_state(state)
+
+    # clear any leftover bracket from a just-closed trade
     leftovers = client.open_algo_orders()
     if leftovers:
         log(f"flat with {len(leftovers)} leftover bracket order(s) -> cancelling")
         if not dry:
             client.cancel_all()
+
+    if just_closed:
+        log(f"flat — trade closed on candle {bar}; skip re-entry this candle (backtest parity)")
+        return
 
     plan = evaluate_signal(cfg)
     if not plan or plan.get("signal") is None:
@@ -175,6 +194,7 @@ def run_once(testnet: bool = True, dry: bool = False) -> None:
     log(f"SL algo {sl.get('algoId')} | TP algo {tp.get('algoId')}")
     state = load_state()
     state["last_entry_bar"] = plan["bar"]
+    state["in_position"] = True
     save_state(state)
     log("live. SL + TP resting; exchange will close the position.")
 
