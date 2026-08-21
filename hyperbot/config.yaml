@@ -49,7 +49,7 @@ oi_filter:
   # monitor). Signals/execution on the Binance perp feed.
   # 2026-07: relaxed chop entry 5/5 -> 4/5 for the demo (backtest ~1.5x frequency, ~2x
   # return $158k->$317k, but deeper drawdown -29% -> -43%). Still BTC-only (fails ETH OOS).
-  enabled: true
+  enabled: false        # SWITCH: true = gate entries to chop regime; false = UNGATED (no OI, take 4/5 every bar). Flip on the server, no redeploy.
   source: BTCUSDT       # Binance USDT-M perp (candles + open interest)
   window_hours: 720     # 30-day delta lookback
   avg_hours: 24         # smooth both endpoints over 24h (kills reference-spike noise)

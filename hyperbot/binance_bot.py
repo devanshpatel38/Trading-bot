@@ -81,18 +81,27 @@ def hybrid_oi(oi_cfg) -> pd.DataFrame | None:
 
 
 def evaluate_signal(cfg) -> dict | None:
-    """Chop signal on the latest CLOSED perp bar. Returns a trade plan or None."""
+    """Signal on the latest CLOSED perp bar. Returns a trade plan or None.
+
+    OI filter is a switch: `oi_filter.enabled: true` gates entries to the chop regime
+    (the validated live behaviour); `false` runs UNGATED — no OI fetch, take the same
+    {chop_min_agree}/5 signal on every bar (still behind the EMA{htf} trend filter).
+    Flip it in config.yaml on the server; no code change or redeploy needed.
+    """
     oi_cfg, bc = cfg.oi_filter, cfg.backtest
     df = recent_perp(oi_cfg.source, cfg.interval, days=75).iloc[:-1]  # drop forming bar
     bar = str(df.index[-1])
-    oi = hybrid_oi(oi_cfg)
-    if oi is None:
-        return {"signal": None, "regime": "oi_api_down", "bar": bar, "blocked": "oi_api_down"}
-    reg = regime_series(df.index, oi, window=oi_cfg.window_hours, avg_hours=oi_cfg.avg_hours,
-                        chop_enter=oi_cfg.chop_hyst_enter, chop_exit=oi_cfg.chop_hyst_exit)
-    regime = str(reg.iloc[-1])
-    if regime != oi_cfg.trade_regime:
-        return {"signal": None, "regime": regime, "bar": bar}
+    if oi_cfg.enabled:
+        oi = hybrid_oi(oi_cfg)
+        if oi is None:
+            return {"signal": None, "regime": "oi_api_down", "bar": bar, "blocked": "oi_api_down"}
+        reg = regime_series(df.index, oi, window=oi_cfg.window_hours, avg_hours=oi_cfg.avg_hours,
+                            chop_enter=oi_cfg.chop_hyst_enter, chop_exit=oi_cfg.chop_hyst_exit)
+        regime = str(reg.iloc[-1])
+        if regime != oi_cfg.trade_regime:
+            return {"signal": None, "regime": regime, "bar": bar}
+    else:
+        regime = oi_cfg.trade_regime            # ungated: every bar eligible, no OI fetch
 
     strategies = {n: REGISTRY[n](s.params) for n, s in cfg.strategies.items() if s.enabled}
     sigs = [s.analyze(df) for s in strategies.values()]
@@ -121,7 +130,8 @@ def run_once(testnet: bool = True, dry: bool = False) -> None:
     # Stamp every run with the last CLOSED candle we read, so bot.log shows the bar
     # each cron invocation acted on (and confirms firing is in sync with candle close).
     bar = latest_closed_bar(oi_cfg.source, cfg.interval)
-    log(f"run [{'demo' if testnet else 'MAINNET'}] {oi_cfg.source} {cfg.interval} | last closed bar: {bar}")
+    oi_mode = f"OI-gate ON (chop {oi_cfg.chop_min_agree}/5)" if oi_cfg.enabled else f"OI-gate OFF (ungated {oi_cfg.chop_min_agree}/5)"
+    log(f"run [{'demo' if testnet else 'MAINNET'}] {oi_cfg.source} {cfg.interval} | last closed bar: {bar} | {oi_mode}")
 
     pos = client.position()
     if pos is not None:
