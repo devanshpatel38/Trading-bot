@@ -1,0 +1,11 @@
+# Research / retraining dependencies — NOT needed to RUN the live bot.
+#
+# The deployed meta-model is a plain-JSON artifact (models/meta_logistic_*.json) whose
+# inference is pure numpy (hyperbot/ml/model_io.py), so binance_bot.py, reconcile.py, and
+# `hyperbot.ml.status` (frozen path) need only requirements.txt. Install these ON TOP of
+# requirements.txt only to (re)train / freeze / run the offline research + OOS scripts:
+#   hyperbot.ml.freeze, hyperbot.ml.research, hyperbot.ml.eth_oos / sol_oos / overfit_check,
+#   and `hyperbot.ml.status --refit`.
+scikit-learn
+lightgbm
+xgboost

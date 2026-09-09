@@ -27,7 +27,6 @@ from ..strategies.base import atr, ema
 from .dataset import CACHE_PATH, FEATURE_COLS, build_dataset, feature_row
 from .features import market_features
 from .model_io import load_frozen
-from .research import _fit_logistic
 
 FROZEN_PATH = "models/meta_logistic_v1.json"
 
@@ -43,6 +42,7 @@ def load_model(refit: bool = False):
         fm = load_frozen(FROZEN_PATH)
         return fm, fm.q33, fm.q67, fm.n_train, f"frozen {fm.version} ({fm.trained_at})"
 
+    from .research import _fit_logistic  # lazy: training deps not needed for the frozen path
     if not os.path.exists(CACHE_PATH):
         data = build_dataset()
         os.makedirs(os.path.dirname(CACHE_PATH) or ".", exist_ok=True)
