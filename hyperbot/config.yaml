@@ -63,3 +63,16 @@ oi_filter:
   recent_days: 50       # live OI fetch window
   risk_pct: 0.05        # risk per trade as fraction of capital (5%; ~28% max DD. lower to 0.02-0.03 for a gentler ride)
   risk_floor: 250       # min $ risk/trade: risk = max(250, 5%*capital). $250 = 5% of the $5000 base; floors risk when capital < $5000
+model_filter:
+  # ML meta-model overlay on the ungated signal. SWITCH: when enabled, the frozen logistic
+  # (models/meta_logistic_<version>.json) scores each fired signal; its tercile drives sizing:
+  #   low  -> SKIP (stand aside)   mid -> mid_pct/floor   high -> high_pct/floor
+  # Default OFF: the bot sizes with oi_filter.risk_pct/risk_floor as before. Flip on the server,
+  # no redeploy. NOTE: reconcile.py does not yet apply the model, so with this ON the live bot
+  # will diverge from the reconcile scorecard until Step 3 (parity) is wired.
+  enabled: false        # SWITCH: true = model gates + sizes; false = unchanged (plain ungated sizing)
+  path: models/meta_logistic_v1.json   # the frozen artifact to load (never trade on a load failure)
+  mid_pct: 0.02         # mid tercile: risk max(mid_floor, 2% * balance)
+  mid_floor: 100.0
+  high_pct: 0.05        # high tercile: risk max(high_floor, 5% * balance)
+  high_floor: 250.0

@@ -55,6 +55,19 @@ class OIFilterConfig:
 
 
 @dataclass
+class ModelFilterConfig:
+    """ML meta-model overlay. When enabled, the frozen logistic scores each signal and
+    its tercile drives sizing: low -> skip, mid -> mid_pct/floor, high -> high_pct/floor.
+    A runtime switch like oi_filter; default OFF so the live bot is unchanged until flipped."""
+    enabled: bool = False
+    path: str = "models/meta_logistic_v1.json"
+    mid_pct: float = 0.02
+    mid_floor: float = 100.0
+    high_pct: float = 0.05
+    high_floor: float = 250.0
+
+
+@dataclass
 class Config:
     symbol: str
     interval: str
@@ -64,6 +77,7 @@ class Config:
     aggregator: AggregatorConfig
     backtest: BacktestConfig
     oi_filter: OIFilterConfig = field(default_factory=OIFilterConfig)
+    model_filter: ModelFilterConfig = field(default_factory=ModelFilterConfig)
     api_key: str | None = None
     api_secret: str | None = None
 
@@ -90,6 +104,7 @@ class Config:
             aggregator=AggregatorConfig(**raw["aggregator"]),
             backtest=BacktestConfig(**raw["backtest"]),
             oi_filter=OIFilterConfig(**raw.get("oi_filter", {})),
+            model_filter=ModelFilterConfig(**raw.get("model_filter", {})),
             api_key=os.getenv("HL_API_KEY"),
             api_secret=os.getenv("HL_API_SECRET"),
         )

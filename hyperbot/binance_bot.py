@@ -24,6 +24,9 @@ from .strategies import REGISTRY
 from .strategies.base import atr, ema
 from .strategies.aggregator import aggregate_regime
 from .binance_exec import BinanceFuturesClient
+from .ml.model_io import load_frozen
+from .ml.features import market_features
+from .ml.dataset import feature_row
 
 STATE_PATH = Path(__file__).parent.parent / "binance_bot_state.json"
 
@@ -107,7 +110,7 @@ def evaluate_signal(cfg) -> dict | None:
 
     strategies = {n: REGISTRY[n](s.params) for n, s in cfg.strategies.items() if s.enabled}
     sigs = [s.analyze(df) for s in strategies.values()]
-    rec, _ = aggregate_regime(sigs, regime, cfg.aggregator.threshold, oi_cfg.chop_min_agree)
+    rec, agreed = aggregate_regime(sigs, regime, cfg.aggregator.threshold, oi_cfg.chop_min_agree)
     if rec not in ("long", "short"):
         return {"signal": None, "regime": regime, "bar": bar}
 
@@ -117,10 +120,29 @@ def evaluate_signal(cfg) -> dict | None:
     if (rec == "long" and close <= htf) or (rec == "short" and close >= htf):
         return {"signal": None, "regime": regime, "bar": bar, "blocked": "htf"}
 
+    # ML meta-model overlay (runtime switch). Scores the fired signal with the FROZEN
+    # artifact; low tercile -> stand aside; mid/high -> the sizing tier run_once applies.
+    # Uses the SAME feature_row/market_features code as training. Never trade on a load fail.
+    tercile = p_win = None
+    mdl = cfg.model_filter
+    if mdl.enabled:
+        try:
+            fm = load_frozen(mdl.path)
+        except Exception as exc:
+            log(f"model artifact load failed ({exc}) — standing aside (never trade on a broken model)")
+            return {"signal": None, "regime": regime, "bar": bar, "blocked": "model_load_error"}
+        mf_row = market_features(df, htf_period=bc.htf_period, atr_period=bc.atr_period).iloc[-1]
+        conf = {s.strategy: {"buy": s.buy_confidence, "sell": s.sell_confidence} for s in sigs}
+        row = feature_row(conf, agreed, rec == "long", mf_row)
+        p_win = fm.score_row(row)
+        tercile = fm.tercile(p_win)
+        if tercile == "low":
+            return {"signal": None, "regime": regime, "bar": bar, "blocked": f"model_low(P={p_win:.2f})"}
+
     sign = 1.0 if rec == "long" else -1.0
     stop_dist = bc.atr_mult * a
     return {"signal": rec, "regime": regime, "bar": bar, "stop_dist": stop_dist,
-            "ref_price": close,
+            "ref_price": close, "tercile": tercile, "p_win": p_win,
             "stop": close - sign * stop_dist, "tp": close + sign * bc.rr * stop_dist}
 
 
@@ -133,7 +155,8 @@ def run_once(testnet: bool = True, dry: bool = False) -> None:
     # each cron invocation acted on (and confirms firing is in sync with candle close).
     bar = latest_closed_bar(oi_cfg.source, cfg.interval)
     oi_mode = f"OI-gate ON (chop {oi_cfg.chop_min_agree}/5)" if oi_cfg.enabled else f"OI-gate OFF (ungated {oi_cfg.chop_min_agree}/5)"
-    log(f"run [{'demo' if testnet else 'MAINNET'}] {oi_cfg.source} {cfg.interval} | last closed bar: {bar} | {oi_mode}")
+    mdl_mode = f"MODEL ON ({cfg.model_filter.path})" if cfg.model_filter.enabled else "MODEL OFF"
+    log(f"run [{'demo' if testnet else 'MAINNET'}] {oi_cfg.source} {cfg.interval} | last closed bar: {bar} | {oi_mode} | {mdl_mode}")
 
     pos = client.position()
     state = load_state()
@@ -176,12 +199,22 @@ def run_once(testnet: bool = True, dry: bool = False) -> None:
         return
 
     bal = client.available_usdt()
-    risk_usd = max(oi_cfg.risk_floor, oi_cfg.risk_pct * bal)   # floor: never risk less than risk_floor
+    mdl = cfg.model_filter
+    if mdl.enabled and plan.get("tercile"):   # model-driven tercile sizing
+        if plan["tercile"] == "high":
+            risk_usd = max(mdl.high_floor, mdl.high_pct * bal)
+            risk_desc = f"HIGH P={plan['p_win']:.2f}: max(${mdl.high_floor:.0f}, {mdl.high_pct*100:.0f}%x${bal:.0f})"
+        else:  # mid
+            risk_usd = max(mdl.mid_floor, mdl.mid_pct * bal)
+            risk_desc = f"MID P={plan['p_win']:.2f}: max(${mdl.mid_floor:.0f}, {mdl.mid_pct*100:.0f}%x${bal:.0f})"
+    else:
+        risk_usd = max(oi_cfg.risk_floor, oi_cfg.risk_pct * bal)   # floor: never risk less than risk_floor
+        risk_desc = f"max(${oi_cfg.risk_floor:.0f}, {oi_cfg.risk_pct*100:.0f}%x${bal:.0f})"
     qty = client.round_qty(risk_usd / plan["stop_dist"])
     side = "BUY" if plan["signal"] == "long" else "SELL"
     close_side = "SELL" if plan["signal"] == "long" else "BUY"
     log(f"SIGNAL {plan['signal'].upper()} bar {plan['bar']} | ref {plan['ref_price']:.1f} "
-        f"qty {qty} (risk ${risk_usd:.0f} = max(${oi_cfg.risk_floor:.0f}, {oi_cfg.risk_pct*100:.0f}%x${bal:.0f})) | "
+        f"qty {qty} (risk ${risk_usd:.0f} = {risk_desc}) | "
         f"SL {client.round_price(plan['stop']):.1f} TP {client.round_price(plan['tp']):.1f}")
     if dry:
         log("DRY RUN — no orders placed")

@@ -70,7 +70,7 @@ def run_backtest(df, strategies, *, threshold, min_agree, margin, rr,
                  atr_period=14, atr_mult=1.5, warmup=215, fee=0.0, slippage=0.0,
                  one_per_day=False, max_window=None, htf_period=None,
                  regime_series=None, regime_rules=None, enabled_regimes=None,
-                 chop_min_agree=5):
+                 chop_min_agree=5, meta=None):
     """Walk bars one at a time (no lookahead); one trade at a time.
 
     one_per_day: if True, take at most one entry per calendar day.
@@ -174,6 +174,15 @@ def run_backtest(df, strategies, *, threshold, min_agree, margin, rr,
                 continue
             if rec == "short" and not (entry < h):
                 continue
+        # Optional ML meta-model gate (mirrors the live model_filter): a duck-typed
+        # callable meta(sigs, agreed, is_long, i) -> (take, tercile, p). A low tercile
+        # means stand aside (skip this entry, stay flat) exactly as the live bot does.
+        meta_tercile = meta_p = None
+        if meta is not None:
+            take, meta_tercile, meta_p = meta(sigs, agreed, rec == "long", i)
+            if not take:
+                continue
+
         last_entry_date = bar_date
         stop_dist = atr_mult * a
         sign = 1.0 if rec == "long" else -1.0
@@ -191,6 +200,7 @@ def run_backtest(df, strategies, *, threshold, min_agree, margin, rr,
             "be_price": be_price, "be_moved": False,
             "outcome": None, "exit_time": None, "exit_price": None,
             "bars_held": 0, "gross_r": 0.0, "cost_r": 0.0, "r_multiple": 0.0,
+            "tercile": meta_tercile, "p_win": meta_p,
             "strategies_agreed": agreed,
             "confidences": {s.strategy: {"buy": s.buy_confidence, "sell": s.sell_confidence} for s in sigs},
             "_entry_i": i,
