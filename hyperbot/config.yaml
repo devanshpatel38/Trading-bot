@@ -70,7 +70,7 @@ model_filter:
   # Default OFF: the bot sizes with oi_filter.risk_pct/risk_floor as before. Flip on the server,
   # no redeploy. NOTE: reconcile.py does not yet apply the model, so with this ON the live bot
   # will diverge from the reconcile scorecard until Step 3 (parity) is wired.
-  enabled: false        # SWITCH: true = model gates + sizes; false = unchanged (plain ungated sizing)
+  enabled: true         # SWITCH: true = model gates + sizes; false = unchanged (plain ungated sizing)
   path: models/meta_logistic_v1.json   # the frozen artifact to load (never trade on a load failure)
   mid_pct: 0.02         # mid tercile: risk max(mid_floor, 2% * balance)
   mid_floor: 100.0
